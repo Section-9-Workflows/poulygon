@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2026 DoubleDensity <doubledense@gmail.com>
 use std::ffi::c_void;
+use std::io::Write;
 use std::time::Instant;
 
 #[repr(C)]
@@ -99,7 +100,7 @@ fn main() {
         let seconds = now.duration_since(report).as_secs_f64();
         if seconds >= 5.0 {
             let new_cpu = unsafe { facet_cpu_seconds() };
-            eprintln!("facet: {:.1} fps, {:.1}% CPU, {} frames, tick {}",
+            let _ = writeln!(std::io::stderr().lock(), "facet: {:.1} fps, {:.1}% CPU, {} frames, tick {}",
                 (frames - report_frames) as f64 / seconds, (new_cpu - cpu) * 100.0 / seconds,
                 frames, sim.tick);
             cpu = new_cpu;
@@ -108,6 +109,6 @@ fn main() {
         }
     };
     let cleanup = unsafe { facet_close(display) };
-    eprintln!("facet: {} frames in {:.2}s", frames, start.elapsed().as_secs_f64());
+    let _ = writeln!(std::io::stderr().lock(), "facet: {} frames in {:.2}s", frames, start.elapsed().as_secs_f64());
     if failed || cleanup != 0 { std::process::exit(1); }
 }

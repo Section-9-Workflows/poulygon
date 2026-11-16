@@ -21,6 +21,8 @@ Extract the release into its own directory, then run `./facet` from a local
 terminal. The launcher opens a spare Linux VT with sudo. Q, Escape or Ctrl-C
 exits; switching VTs also exits. `facet.log` records startup, frame rate and
 errors. The launcher waits for exit and returns to the original console.
+An idle inhibitor prevents automatic battery suspend while the demo runs. It
+does not change the owner's explicit lid-close or manual-suspend policy.
 
 The package carries a private i386 loader and shared libraries, leaving the
 old host runtime intact. It does not replace fbterm or install a system service.

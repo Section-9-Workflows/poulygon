@@ -7,7 +7,8 @@ fi
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 log="$root/facet.log"
 # A spare VT lets fbterm release its display ownership before the game starts.
-printf -v command '%q ' /bin/openvt -s -w -- "$root/lib/ld-linux.so.2" \
+printf -v command '%q ' systemd-inhibit --what=idle --mode=block --who=Facet \
+    '--why=Native GPU session' /bin/openvt -s -w -- "$root/lib/ld-linux.so.2" \
     --library-path "$root/lib" "$root/bin/facet"
 printf -v quoted_log '%q' "$log"
 exec sudo /bin/bash -c "exec $command 2>>$quoted_log"

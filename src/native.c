@@ -20,6 +20,7 @@
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
@@ -37,6 +38,13 @@ struct facet {
     bool terminal_saved, vt_saved, master, shown, pending, lost;
 };
 static volatile sig_atomic_t stop, release_vt;
+
+double facet_cpu_seconds(void)
+{
+    struct timespec now;
+    if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &now)) return 0;
+    return now.tv_sec + now.tv_nsec * 1e-9;
+}
 
 static void interrupted(int signal)
 {
@@ -71,11 +79,18 @@ static int create_bo(struct facet *f, uint32_t type, uint32_t flags, uint64_t by
         .size = (bytes + 4095u) & ~UINT64_C(4095)};
     if (drmIoctl(f->fd, DRM_IOCTL_PB_BO_CREATE, &request)) return -errno;
     *out = (struct poulsback_frame_bo){request.handle, request.gpu_va, request.size, NULL};
-    if (request.size < bytes || request.size > SIZE_MAX) return -EOVERFLOW;
+    if (request.size < bytes || request.size > SIZE_MAX) {
+        free_bo(f, out);
+        return -EOVERFLOW;
+    }
     if (mapped) {
         void *map = mmap(NULL, (size_t)request.size, PROT_READ | PROT_WRITE, MAP_SHARED,
                          f->fd, (off_t)request.mmap_offset);
-        if (map == MAP_FAILED) return -errno;
+        if (map == MAP_FAILED) {
+            int ret = -errno;
+            free_bo(f, out);
+            return ret;
+        }
         out->map = map;
     }
     return 0;
@@ -230,7 +245,8 @@ struct facet *facet_open(uint32_t *width, uint32_t *height)
     struct sigaction action = {.sa_handler = interrupted};
     sigemptyset(&action.sa_mask);
     if (sigaction(SIGTERM, &action, NULL) || sigaction(SIGINT, &action, NULL) ||
-        sigaction(SIGHUP, &action, NULL) || sigaction(SIGUSR1, &action, NULL)) {
+        sigaction(SIGHUP, &action, NULL) || sigaction(SIGUSR1, &action, NULL) ||
+        sigaction(SIGUSR2, &action, NULL)) {
         ret = -errno; goto failed;
     }
     if (ioctl(0, VT_GETMODE, &f->vt) || tcgetattr(0, &f->termios)) { ret = -errno; goto failed; }
@@ -314,12 +330,17 @@ int facet_frame(struct facet *f, const struct facet_vertex *vertices, uint32_t c
     if (ret) { f->lost = true; return error("render completion; no retry", -ret); }
     if (!f->shown) {
         if (drmModeSetCrtc(f->fd, f->saved->crtc_id, f->fb[f->next], 0, 0, &f->connector,
-                           1, &f->saved->mode)) return error("first frame", errno);
+                           1, &f->saved->mode)) {
+            f->lost = true;
+            return error("first frame", errno);
+        }
         f->shown = true;
         if (ioctl(0, KDSETMODE, KD_GRAPHICS)) return error("graphics VT", errno);
     } else {
-        if (drmModePageFlip(f->fd, f->saved->crtc_id, f->fb[f->next], DRM_MODE_PAGE_FLIP_EVENT, f))
+        if (drmModePageFlip(f->fd, f->saved->crtc_id, f->fb[f->next], DRM_MODE_PAGE_FLIP_EVENT, f)) {
+            f->lost = true;
             return error("page flip", errno);
+        }
         f->pending = true;
         ret = wait_flip(f);
         if (ret) { f->lost = true; return error("page flip completion; no retry", -ret); }

@@ -10,6 +10,7 @@ extern "C" {
     fn facet_open(width: *mut u32, height: *mut u32) -> *mut c_void;
     fn facet_frame(display: *mut c_void, vertices: *const Vertex, count: u32) -> i32;
     fn facet_close(display: *mut c_void) -> i32;
+    fn facet_cpu_seconds() -> f64;
 }
 
 const STEP: f64 = 1.0 / 120.0;
@@ -80,23 +81,27 @@ fn main() {
     let mut frames = 0u64;
     let mut report = start;
     let mut report_frames = 0;
-    let mut failed = false;
-    loop {
+    let mut cpu = unsafe { facet_cpu_seconds() };
+    let failed = loop {
         let now = Instant::now();
         sim.advance(now.duration_since(previous).as_secs_f64());
         previous = now;
         cube(sim.time(), width as f32 / height as f32, &mut vertices);
         let result = unsafe { facet_frame(display, vertices.as_ptr(), vertices.len() as u32) };
-        if result <= 0 { failed = result < 0; break; }
+        if result <= 0 { break result < 0; }
         frames += 1;
         let now = Instant::now();
         let seconds = now.duration_since(report).as_secs_f64();
         if seconds >= 5.0 {
-            eprintln!("facet: {:.1} fps, {} frames, tick {}", (frames - report_frames) as f64 / seconds, frames, sim.tick);
+            let new_cpu = unsafe { facet_cpu_seconds() };
+            eprintln!("facet: {:.1} fps, {:.1}% CPU, {} frames, tick {}",
+                (frames - report_frames) as f64 / seconds, (new_cpu - cpu) * 100.0 / seconds,
+                frames, sim.tick);
+            cpu = new_cpu;
             report = now;
             report_frames = frames;
         }
-    }
+    };
     let cleanup = unsafe { facet_close(display) };
     eprintln!("facet: {} frames in {:.2}s", frames, start.elapsed().as_secs_f64());
     if failed || cleanup != 0 { std::process::exit(1); }

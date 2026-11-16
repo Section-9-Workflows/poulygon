@@ -12,7 +12,7 @@ RUN mkdir /artifacts && printf '%s\n' "$SOURCE_REVISION" > dist/source-revision.
     && readelf -h -d dist/bin/facet > /artifacts/elf.txt \
     && cp build/link.map /artifacts/link.map \
     && du -b dist/bin/facet > /artifacts/binary-size.txt \
-    && tar -czf /artifacts/facet-i686.tar.gz -C dist . \
+    && tar -czf /artifacts/poulygon-i686.tar.gz -C dist . \
     && tar -czf /artifacts/source.tar.gz --exclude=.git --exclude=build --exclude=dist . \
     && cd /artifacts && sha256sum * > SHA256SUMS
 FROM scratch AS artifacts

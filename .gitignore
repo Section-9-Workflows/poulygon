@@ -1,3 +1,5 @@
 /build/
 /dist/
+/artifacts/
+__pycache__/
 *.log

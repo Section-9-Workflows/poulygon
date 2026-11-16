@@ -1,4 +1,4 @@
-# Facet
+# Poulygon
 
 A small Rust application for flat-shaded 3D on the Sony VAIO P, using Poulsback
 directly. The first scene is a rotating cube at the inherited panel resolution
@@ -17,9 +17,9 @@ network transport, rollback system or claim of cross-machine determinism yet.
 
 ## Run
 
-Extract the release into its own directory, then run `./facet` from a local
+Extract the release into its own directory, then run `./poulygon` from a local
 terminal. The launcher opens a spare Linux VT with sudo. Q, Escape or Ctrl-C
-exits; switching VTs also exits. `facet.log` records startup, frame rate and
+exits; switching VTs also exits. `poulygon.log` records startup, frame rate and
 errors. The launcher waits for exit and returns to the original console.
 An idle inhibitor prevents automatic battery suspend while the demo runs. It
 does not change the owner's explicit lid-close or manual-suspend policy.
@@ -44,10 +44,20 @@ fault can still require a reboot; this application cannot repair a lost engine.
 
 ## Build
 
-Use the pinned i386 Debian container in `tools/Dockerfile` through Depot:
+Pushes to `main` and the manual GitHub Actions workflow build the pinned i386
+container on Depot. GitHub coordinates the job; compilation runs on Depot's
+AMD64 builder. The workflow uses OIDC, with no stored Depot credential. Public
+fork pull requests cannot use this project's build credentials.
+
+Depot keeps the build cache and the finished artifact image. The workflow
+summary links the build and records its source revision. It does not upload
+GitHub Actions artifacts. The image contains `poulygon-i686.tar.gz`, source,
+compiler details and `SHA256SUMS`.
+
+To build and export those files from a machine with an authenticated Depot CLI:
 
 ```
-depot build --project qk39vv1js0 --build-platform linux/amd64 --platform linux/386 \
+depot build --build-platform linux/amd64 --platform linux/386 \
   --file tools/Dockerfile --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" \
   --save --output type=local,dest=artifacts .
 ```

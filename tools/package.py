@@ -45,5 +45,5 @@ shutil.copy2('vendor/poulsback/REVISION', root / 'poulsback-revision.txt')
 (root / 'runtime-packages.json').write_text(json.dumps(packages, indent=2) + '\n')
 for name in ['README.md', 'LICENSE']:
     shutil.copy2(name, root / name)
-shutil.copy2('tools/facet', root / 'facet')
-(root / 'facet').chmod(0o755)
+shutil.copy2('tools/poulygon', root / 'poulygon')
+(root / 'poulygon').chmod(0o755)

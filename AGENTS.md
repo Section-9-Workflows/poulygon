@@ -1,4 +1,4 @@
-# Facet / Icarus native 3D
+# Poulygon / Icarus native 3D
 
 No unit tests, synthetic probes, mocks, fabricated inputs or simulated devices.
 Validate by compilation and the actual application on Icarus. The rotating cube

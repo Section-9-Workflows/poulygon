@@ -1,0 +1,39 @@
+name: Build Poulygon on Depot
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: poulygon-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: depot/setup-action@91bc8495a33ebfc504ffc89e5674379ccf23c29c # v1
+      - name: Build and save the i386 package
+        env:
+          SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          depot build --build-platform linux/amd64 --platform linux/386 \
+            --file tools/Dockerfile --build-arg SOURCE_REVISION="$SOURCE_REVISION" \
+            --save --save-tag "$SOURCE_REVISION" --metadata-file build-metadata.json .
+          {
+            echo "Source: $SOURCE_REVISION"
+            echo
+            echo "[Depot builds](https://depot.dev/orgs/lc0nzzw9c5/projects/04pq4c9316)"
+            echo
+            echo "Saved image: registry.depot.dev/04pq4c9316:$SOURCE_REVISION"
+            echo
+            echo '```json'
+            cat build-metadata.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

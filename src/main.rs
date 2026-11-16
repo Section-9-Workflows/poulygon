@@ -43,7 +43,7 @@ impl Simulation {
     fn time(&self) -> f32 { (self.tick as f64 * STEP + self.remainder) as f32 }
 }
 
-fn cube(time: f32, aspect: f32, out: &mut [Vertex; 36]) {
+fn cube(time: f32, aspect: f32, out: &mut [Vertex; 36]) -> usize {
     let (sy, cy) = (time * 0.55).sin_cos();
     let (sx, cx) = (time * 0.31).sin_cos();
     let rotate = |v: [f32; 3]| {
@@ -59,15 +59,20 @@ fn cube(time: f32, aspect: f32, out: &mut [Vertex; 36]) {
         clip[i] = [p[0] * 2.4 / aspect, p[1] * 2.4,
                    (21.0 * distance - 40.0) / 19.0, distance];
     }
+    let mut count = 0;
     for face in 0..6 {
         let n = rotate(NORMALS[face]);
+        // The camera is at (0, 0, 5); each cube face lies one unit from its center.
+        if 5.0 * n[2] <= 1.0 { continue; }
         let light = 0.24 + 0.76 * (n[0] * -0.36 + n[1] * 0.48 + n[2] * 0.8).max(0.);
         let rgb = COLORS[face];
         let color = [rgb[0] * light, rgb[1] * light, rgb[2] * light, 1.];
         for (j, corner) in [0, 1, 2, 0, 2, 3].iter().enumerate() {
-            out[face * 6 + j] = Vertex { position: clip[FACES[face][*corner]], color };
+            out[count + j] = Vertex { position: clip[FACES[face][*corner]], color };
         }
+        count += 6;
     }
+    count
 }
 
 fn main() {
@@ -86,8 +91,8 @@ fn main() {
         let now = Instant::now();
         sim.advance(now.duration_since(previous).as_secs_f64());
         previous = now;
-        cube(sim.time(), width as f32 / height as f32, &mut vertices);
-        let result = unsafe { facet_frame(display, vertices.as_ptr(), vertices.len() as u32) };
+        let count = cube(sim.time(), width as f32 / height as f32, &mut vertices);
+        let result = unsafe { facet_frame(display, vertices.as_ptr(), count as u32) };
         if result <= 0 { break result < 0; }
         frames += 1;
         let now = Instant::now();

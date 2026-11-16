@@ -77,7 +77,11 @@ static int create_bo(struct facet *f, uint32_t type, uint32_t flags, uint64_t by
     struct poulsback_bo_create request = {
         .abi = POULSBACK_BO_ABI, .bo_class = type, .flags = flags,
         .size = (bytes + 4095u) & ~UINT64_C(4095)};
-    if (drmIoctl(f->fd, DRM_IOCTL_PB_BO_CREATE, &request)) return -errno;
+    if (drmIoctl(f->fd, DRM_IOCTL_PB_BO_CREATE, &request)) {
+        int code = errno;
+        if (code == EIO) f->lost = true;
+        return -code;
+    }
     *out = (struct poulsback_frame_bo){request.handle, request.gpu_va, request.size, NULL};
     if (request.size < bytes || request.size > SIZE_MAX) {
         free_bo(f, out);

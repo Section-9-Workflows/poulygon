@@ -10,6 +10,7 @@ RUN mkdir /artifacts && printf '%s\n' "$SOURCE_REVISION" > dist/source-revision.
     && dpkg-query -W > /artifacts/build-packages.tsv \
     && rustc -vV > /artifacts/rustc.txt && cc -v 2> /artifacts/cc.txt \
     && readelf -h -d dist/bin/facet > /artifacts/elf.txt \
+    && cp build/link.map /artifacts/link.map \
     && du -b dist/bin/facet > /artifacts/binary-size.txt \
     && tar -czf /artifacts/facet-i686.tar.gz -C dist . \
     && tar -czf /artifacts/source.tar.gz --exclude=.git --exclude=build --exclude=dist . \

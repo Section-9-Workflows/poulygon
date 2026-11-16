@@ -4,7 +4,7 @@ A small Rust application for flat-shaded 3D on the Sony VAIO P, using Poulsback
 directly. The first scene is a rotating cube at the inherited panel resolution
 (1600×768 on Icarus). It needs no X, Wayland, OpenGL or Mesa runtime.
 
-Rust transforms eight corners and calculates six diffuse face colors. The GPU
+Rust transforms eight corners, culls hidden faces and calculates diffuse face colors. The GPU
 clips and rasterizes the triangles, handles depth, and writes a native scanout
 buffer. Two buffers alternate through KMS page flips, paced by display events.
 The frame writer caches programs and state. The draw loop uses fixed arrays.
@@ -51,7 +51,7 @@ depot build --project qk39vv1js0 --build-platform linux/amd64 --platform linux/3
 ```
 
 Rust uses Bonnell tuning, optimization level 3, whole-program LTO, one codegen
-unit and abort-on-panic. C uses Bonnell tuning, level 3 and section elimination.
+unit and abort-on-panic. C uses Bonnell tuning, level 3, LTO and section elimination.
 Floating-point correctness and the driver's ownership checks are preserved.
 The artifact includes source, compiler/package versions and checksums.
 

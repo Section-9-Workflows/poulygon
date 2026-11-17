@@ -25,6 +25,11 @@ pub struct Cybersphere {
     body: Mesh,
     head: Mesh,
     torso: Mesh,
+    time: f64,
+    camera_angle: f32,
+    camera_distance: f32,
+    camera_y: f32,
+    look_y: f32,
 }
 
 impl Cybersphere {
@@ -136,34 +141,22 @@ impl Cybersphere {
                 .atan2(cells[a].center[2])
                 .total_cmp(&cells[b].center[0].atan2(cells[b].center[2]))
         });
-        Self {
+        let mut scene = Self {
             cells,
             targets,
             body: Mesh::sphere(1),
             head: character::head(),
             torso: character::torso(),
-        }
-    }
-    pub fn draw(&self, time: f32, camera: &Camera, out: &mut Vec<Vertex>) {
-        out.clear();
-        let angle = time * 0.13;
-        let eye = [
-            angle.sin() * 2.15,
-            0.24 + 0.12 * (time * 0.19).sin(),
-            angle.cos() * 2.15,
-        ];
-        let forward = unit(sub([0., 0.05, 0.], eye));
-        let right = unit(cross(forward, [0., 1., 0.]));
-        let view = View {
-            camera,
-            eye,
-            forward,
-            right,
-            up: cross(right, forward),
-            model: Rotation::new(0., 0.),
-            pivot: [0.; 3],
-            offset: [0.; 3],
+            time: 0.,
+            camera_angle: 0.,
+            camera_distance: 1.05,
+            camera_y: 1.19,
+            look_y: 1.15,
         };
+        scene.camera_angle = scene.interaction(0.).3;
+        scene
+    }
+    fn interaction(&self, time: f32) -> (usize, f32, f32, f32, f32, f32) {
         let step = (time / 7.) as usize % self.targets.len();
         let active = self.targets[(step * 5) % self.targets.len()];
         let previous = self.targets[((step + self.targets.len() - 1) * 5) % self.targets.len()];
@@ -176,6 +169,58 @@ impl Cybersphere {
         let delta = (target[0].atan2(target[2]) - previous_yaw + PI).rem_euclid(TAU) - PI;
         let yaw = previous_yaw + delta * ease;
         let reach = (phase * PI).sin().max(0.);
+        (active, previous_yaw, delta, yaw, phase, reach)
+    }
+    fn portrait(time: f32) -> f32 {
+        let shot = (time + 30.).rem_euclid(40.);
+        if (24.0..36.0).contains(&shot) {
+            ((shot - 24.) / 12. * PI).sin().powi(2)
+        } else {
+            0.
+        }
+    }
+    pub fn update(&mut self, dt: f32) {
+        self.time += dt as f64;
+        let time = self.time as f32;
+        let portrait = Self::portrait(time);
+        if portrait > 0.02 {
+            let yaw = self.interaction(time).3;
+            let turn = (yaw - self.camera_angle + PI).rem_euclid(TAU) - PI;
+            self.camera_angle += (turn * dt * 1.4).clamp(-dt * 0.7, dt * 0.7);
+        } else {
+            self.camera_angle += dt * 0.18;
+        }
+        self.camera_angle = (self.camera_angle + PI).rem_euclid(TAU) - PI;
+        self.camera_distance += (2.15 - 1.10 * portrait - self.camera_distance) * dt * 1.2;
+        self.camera_y += (0.24 + 0.95 * portrait - self.camera_y) * dt * 1.2;
+        self.look_y += (0.05 + 1.10 * portrait - self.look_y) * dt * 1.2;
+    }
+    pub fn draw(&self, time: f32, camera: &Camera, out: &mut Vec<Vertex>) {
+        out.clear();
+        let angle = self.camera_angle;
+        let eye = [
+            angle.sin() * self.camera_distance,
+            self.camera_y,
+            angle.cos() * self.camera_distance,
+        ];
+        let forward = unit(sub([0., self.look_y, 0.], eye));
+        let right = unit(cross(forward, [0., 1., 0.]));
+        let view = View {
+            camera,
+            eye,
+            forward,
+            right,
+            up: cross(right, forward),
+            model: Rotation::new(0., 0.),
+            pivot: [0.; 3],
+            offset: [0.; 3],
+        };
+        let (active, previous_yaw, delta, yaw, phase, reach) = self.interaction(time);
+        let ease = (phase * 3.5).min(1.);
+        let ease = ease * ease * (3. - 2. * ease);
+        let target = self.cells[active].center;
+        let portrait = Self::portrait(time);
+        let toward_camera = (self.camera_angle - yaw + PI).rem_euclid(TAU) - PI;
         for (i, cell) in self.cells.iter().enumerate() {
             let center = cell.center;
             let pulse = (time * 1.1 - i as f32 * 0.39).cos().max(0.).powi(12);
@@ -203,7 +248,10 @@ impl Cybersphere {
         let offset = [weight * 0.035, -0.015 + 0.015 * breathe, 0.];
         let lean = 0.035 + reach * 0.06;
         let view = View {
-            model: Rotation::new(lean, yaw + 0.08 * reach),
+            model: Rotation::new(
+                lean,
+                yaw + 0.08 * reach + toward_camera.clamp(-0.6, 0.6) * portrait * 0.65,
+            ),
             pivot: [0., -0.35, 0.],
             offset,
             ..world
@@ -216,7 +264,8 @@ impl Cybersphere {
         let face = View {
             model: Rotation::new(
                 lean + 0.035 * (time * 0.8).sin(),
-                yaw + (delta * (1. - ease)).clamp(-0.45, 0.45),
+                yaw + (delta * (1. - ease)).clamp(-0.45, 0.45) * (1. - portrait)
+                    + toward_camera.clamp(-0.6, 0.6) * portrait,
             ),
             pivot: [0., 0.9, 0.],
             offset,

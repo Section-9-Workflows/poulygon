@@ -61,7 +61,7 @@ fn play(display: &mut Display, log: &mut Log, app: &str) -> Result<()> {
     } else {
         Scene::new(explorer.config(), display.capacity())?
     };
-    let sphere = if app == "cybersphere" {
+    let mut sphere = if app == "cybersphere" {
         Some(cybersphere::Cybersphere::new())
     } else {
         None
@@ -79,6 +79,9 @@ fn play(display: &mut Display, log: &mut Log, app: &str) -> Result<()> {
         clock.advance(now.duration_since(previous).as_secs_f64(), |dt| {
             if app == "explore" {
                 scene.update(dt);
+            }
+            if let Some(sphere) = &mut sphere {
+                sphere.update(dt);
             }
         });
         previous = now;

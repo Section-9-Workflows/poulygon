@@ -33,7 +33,8 @@ and shared libraries leave the host runtime and fbterm installation intact.
 
 `./poulygon cybersphere` opens an animated communication sphere inspired by
 Cyber Jobe's cyberspace in *The Lawnmower Man*. A faceted gold figure moves its
-arms and fingers inside a blue honeycomb shell, with illuminated panels and traveling signal pulses. The camera orbits inside the shell. The figure turns its body and face toward
+arms and fingers inside a blue honeycomb shell, with illuminated panels and traveling signal pulses. The camera orbits inside the shell and periodically eases into a frontal
+close-up. The character glances toward the viewer during these shots. The figure turns its body and face toward
 successive panels, reaches out and sends a signal as each selected panel lights
 up. The shell uses thin outlines, with filled panels for active signals.
 Frustum clipping removes geometry outside the camera view before submission. Geometry and colors are generated locally; no film images,

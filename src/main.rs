@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2026 DoubleDensity <doubledense@gmail.com>
 mod cube;
+mod cybersphere;
 mod engine;
 mod explorer;
 mod platform;
@@ -51,10 +52,19 @@ fn play(display: &mut Display, log: &mut Log, app: &str) -> Result<()> {
     };
     let mut clock = Clock::new();
     let mut explorer = Explorer::new();
-    if app == "cube" {
+    if app != "explore" {
         explorer.family = 0;
     }
-    let mut scene = next_scene(&mut explorer, display.capacity(), log)?;
+    let mut scene = if app == "explore" {
+        next_scene(&mut explorer, display.capacity(), log)?
+    } else {
+        Scene::new(explorer.config(), display.capacity())?
+    };
+    let sphere = if app == "cybersphere" {
+        Some(cybersphere::Cybersphere::new())
+    } else {
+        None
+    };
     let mut vertices = Vec::with_capacity(display.capacity());
     let mut cube_vertices = [Vertex::default(); 36];
     let mut window = Window::new();
@@ -76,6 +86,9 @@ fn play(display: &mut Display, log: &mut Log, app: &str) -> Result<()> {
         let span = if app == "cube" {
             let count = cube::draw(clock.time(), camera.aspect, &mut cube_vertices);
             &cube_vertices[..count]
+        } else if let Some(sphere) = &sphere {
+            sphere.draw(clock.time(), &camera, &mut vertices);
+            &vertices[..]
         } else {
             scene.draw(&camera, &mut vertices);
             &vertices[..]
@@ -93,7 +106,7 @@ fn play(display: &mut Display, log: &mut Log, app: &str) -> Result<()> {
                     scene.config.json()
                 ),
             )?;
-            if app == "cube" || scene.config.level == 1 {
+            if app != "explore" || scene.config.level == 1 {
                 return Err("baseline frame refused".into());
             }
             explorer.result(false);
@@ -140,9 +153,14 @@ fn play(display: &mut Display, log: &mut Log, app: &str) -> Result<()> {
                 if !window.ready() {
                     continue;
                 }
-                let (pass, mut fields, text) = window.report(&scene.config);
-                if app == "cube" {
-                    fields = fields.replace("\"family\":\"geometry\"", "\"family\":\"cube\"");
+                let (pass, mut fields, mut text) = window.report(&scene.config);
+                if app != "explore" {
+                    fields = fields.replacen(
+                        &scene.config.json(),
+                        &format!("\"family\":{}", quote(app)),
+                        1,
+                    );
+                    text = text.replace("geometry at level 1", app);
                 }
                 fields.push_str(&format!(",\"actual_speed\":{}", scene.speed()));
                 log.event("window", &fields)?;
@@ -152,8 +170,8 @@ fn play(display: &mut Display, log: &mut Log, app: &str) -> Result<()> {
                 } else {
                     None
                 };
-                log.summary(&if app == "cube" {
-                    text.replace("geometry at level 1", "Cube")
+                log.summary(&if app != "explore" {
+                    text.clone()
                 } else {
                     explorer.summary(&text)
                 })?;
@@ -190,8 +208,8 @@ fn play(display: &mut Display, log: &mut Log, app: &str) -> Result<()> {
 fn run() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let app = args.next().unwrap_or_else(|| "explore".into());
-    if app != "cube" && app != "explore" {
-        return Err("choose cube or explore".into());
+    if app != "cube" && app != "explore" && app != "cybersphere" {
+        return Err("choose cube, explore or cybersphere".into());
     }
     if args.next().as_deref() != Some("--run-dir") {
         return Err("launch with the packaged poulygon script".into());

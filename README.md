@@ -29,6 +29,25 @@ It does not override lid-close or manual suspend. Close the application before
 lid sleep; concurrent suspend has not been qualified. The private i386 loader
 and shared libraries leave the host runtime and fbterm installation intact.
 
+## Cybersphere
+
+`./poulygon cybersphere` opens an animated communication sphere inspired by
+Cyber Jobe's cyberspace in *The Lawnmower Man*. A faceted gold figure moves its
+arms and fingers inside a blue honeycomb shell, with red nodes, rotating rings
+and traveling signal pulses. The viewpoint slowly orbits and breathes inward
+and outward. Geometry and colors are generated locally; no film images,
+textures, neural models or additional runtime dependencies are included.
+
+This is a fixed artistic scene, separate from the workload explorer. It uses the
+same display lifecycle, native resolution, quit keys and measurement logs.
+The honeycomb comes from the dual of a subdivided icosahedron; the figure uses
+flat-shaded solids, jointed limbs and geometric circuit traces. Bright lines
+are thin triangles, and metallic highlights are calculated per face on the CPU.
+There is no bloom or reflective-material pass.
+
+Visual reference: [Cyber Jobe and the honeycomb environment](https://3dvf.com/actualite-19623-nostalgie-retour-sur-origines-film-cobaye-1992-html/).
+The original film's character and imagery belong to their respective owners.
+
 ## Automatic explorer
 
 The explorer runs until you quit. There are no tuning controls. It increases one

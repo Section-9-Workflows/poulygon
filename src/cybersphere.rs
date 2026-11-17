@@ -187,18 +187,16 @@ impl Cybersphere {
             for j in 0..cell.corners.len() {
                 let a = cell.corners[j];
                 let b = cell.corners[(j + 1) % cell.corners.len()];
-                view.triangle([center, a, b], mul(rgb, 0.65), out);
+                if i == active || pulse > 0.92 {
+                    view.triangle([center, a, b], mul(rgb, 0.65), out);
+                }
                 view.line(a, b, rgb, 0.0025, out);
             }
         }
-        for ring in 0..1 {
-            let axis = Rotation::new(0.45 + ring as f32 * 0.8, time * 0.12 + ring as f32 * 0.9);
+        {
+            let axis = Rotation::new(0.45, time * 0.12);
             let point = |a: f32| axis.apply([2.75 * a.cos(), 2.75 * a.sin(), 0.]);
-            let color = if ring == 1 {
-                [0.95, 0.39, 0.08]
-            } else {
-                [0.08, 0.55, 0.75]
-            };
+            let color = [0.08, 0.55, 0.75];
             for j in 0..64 {
                 view.line(
                     point(TAU * j as f32 / 64.),
@@ -209,7 +207,7 @@ impl Cybersphere {
                 );
             }
             for j in 0..3 {
-                let p = point(time * (0.5 + ring as f32 * 0.15) + j as f32 * TAU / 3.);
+                let p = point(time * 0.5 + j as f32 * TAU / 3.);
                 view.mesh(&self.node, p, [0.075; 3], [1., 0.8, 0.32], time, out);
             }
         }
@@ -370,27 +368,47 @@ impl View<'_> {
             p[2],
         ]
     }
-    fn triangle(&self, p: [Vec3; 3], rgb: Vec3, out: &mut Vec<Vertex>) {
-        let p = p.map(|p| self.camera_point(p));
-        let mut clipped = [[0.; 3]; 4];
-        let mut count = 0;
-        // Clip before perspective division when the camera is inside the shell.
-        for i in 0..3 {
-            let a = p[i];
-            let b = p[(i + 1) % 3];
-            if a[2] >= NEAR {
-                clipped[count] = a;
-                count += 1;
-            }
-            if (a[2] >= NEAR) != (b[2] >= NEAR) {
-                let mut cut = add(a, mul(sub(b, a), (NEAR - a[2]) / (b[2] - a[2])));
-                cut[2] = NEAR;
-                clipped[count] = cut;
-                count += 1;
-            }
+    fn plane(&self, p: Vec3, plane: usize) -> f32 {
+        match plane {
+            0 => p[2] - NEAR,
+            1 => p[2] + p[0] * 1.15 / self.camera.aspect,
+            2 => p[2] - p[0] * 1.15 / self.camera.aspect,
+            3 => p[2] + p[1] * 1.15,
+            _ => p[2] - p[1] * 1.15,
         }
-        for i in 1..count.saturating_sub(1) {
-            for p in [clipped[0], clipped[i], clipped[i + 1]] {
+    }
+    fn triangle(&self, p: [Vec3; 3], rgb: Vec3, out: &mut Vec<Vertex>) {
+        let mut input = [[0.; 3]; 8];
+        for (i, p) in p.iter().enumerate() {
+            input[i] = self.camera_point(*p);
+        }
+        let mut count = 3;
+        // Bound the submitted geometry to the visible frustum before GPU clipping.
+        for plane in 0..5 {
+            let mut output = [[0.; 3]; 8];
+            let mut next = 0;
+            for i in 0..count {
+                let a = input[i];
+                let b = input[(i + 1) % count];
+                let da = self.plane(a, plane);
+                let db = self.plane(b, plane);
+                if da >= 0. {
+                    output[next] = a;
+                    next += 1;
+                }
+                if (da >= 0.) != (db >= 0.) {
+                    output[next] = add(a, mul(sub(b, a), da / (da - db)));
+                    next += 1;
+                }
+            }
+            if next < 3 {
+                return;
+            }
+            input = output;
+            count = next;
+        }
+        for i in 1..count - 1 {
+            for p in [input[0], input[i], input[i + 1]] {
                 out.push(Vertex {
                     position: self.project(p),
                     color: [rgb[0], rgb[1], rgb[2], 1.],
@@ -399,20 +417,30 @@ impl View<'_> {
         }
     }
     fn line(&self, a: Vec3, b: Vec3, rgb: Vec3, width: f32, out: &mut Vec<Vertex>) {
-        let mut a = self.camera_point(a);
-        let mut b = self.camera_point(b);
-        if a[2] < NEAR && b[2] < NEAR {
-            return;
-        }
-        if (a[2] >= NEAR) != (b[2] >= NEAR) {
-            let mut cut = add(a, mul(sub(b, a), (NEAR - a[2]) / (b[2] - a[2])));
-            cut[2] = NEAR;
-            if a[2] < NEAR {
-                a = cut;
-            } else {
-                b = cut;
+        let a = self.camera_point(a);
+        let b = self.camera_point(b);
+        let (mut enter, mut leave) = (0f32, 1f32);
+        for plane in 0..5 {
+            let da = self.plane(a, plane);
+            let db = self.plane(b, plane);
+            if da < 0. && db < 0. {
+                return;
+            }
+            if (da >= 0.) != (db >= 0.) {
+                let t = da / (da - db);
+                if da < 0. {
+                    enter = enter.max(t);
+                } else {
+                    leave = leave.min(t);
+                }
             }
         }
+        if enter > leave {
+            return;
+        }
+        let delta = sub(b, a);
+        let b = add(a, mul(delta, leave));
+        let a = add(a, mul(delta, enter));
         let a = self.project(a);
         let b = self.project(b);
         let dx = (b[0] / b[3] - a[0] / a[3]) * self.camera.aspect;

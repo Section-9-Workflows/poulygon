@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2026 DoubleDensity <doubledense@gmail.com>
+mod character;
 mod cube;
 mod cybersphere;
 mod engine;

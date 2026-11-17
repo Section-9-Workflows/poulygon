@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-use crate::{engine::*, platform::Vertex};
+use crate::{character, engine::*, platform::Vertex};
 use std::{
     collections::BTreeMap,
     f32::consts::{PI, TAU},
@@ -23,7 +23,8 @@ pub struct Cybersphere {
     cells: Vec<Cell>,
     targets: Vec<usize>,
     body: Mesh,
-    node: Mesh,
+    head: Mesh,
+    torso: Mesh,
 }
 
 impl Cybersphere {
@@ -68,7 +69,7 @@ impl Cybersphere {
             [8, 6, 7],
             [9, 8, 1],
         ];
-        for _ in 0..2 {
+        for _ in 0..1 {
             let mut edges = BTreeMap::new();
             let mut divided = Vec::with_capacity(faces.len() * 4);
             for [a, b, c] in faces {
@@ -138,8 +139,9 @@ impl Cybersphere {
         Self {
             cells,
             targets,
-            body: Mesh::sphere(2),
-            node: Mesh::solid(false),
+            body: Mesh::sphere(1),
+            head: character::head(),
+            torso: character::torso(),
         }
     }
     pub fn draw(&self, time: f32, camera: &Camera, out: &mut Vec<Vertex>) {
@@ -159,6 +161,8 @@ impl Cybersphere {
             right,
             up: cross(right, forward),
             model: Rotation::new(0., 0.),
+            pivot: [0.; 3],
+            offset: [0.; 3],
         };
         let step = (time / 7.) as usize % self.targets.len();
         let active = self.targets[(step * 5) % self.targets.len()];
@@ -193,156 +197,219 @@ impl Cybersphere {
                 view.line(a, b, rgb, 0.0025, out);
             }
         }
-        {
-            let axis = Rotation::new(0.45, time * 0.12);
-            let point = |a: f32| axis.apply([2.75 * a.cos(), 2.75 * a.sin(), 0.]);
-            let color = [0.08, 0.55, 0.75];
-            for j in 0..64 {
-                view.line(
-                    point(TAU * j as f32 / 64.),
-                    point(TAU * (j + 1) as f32 / 64.),
-                    color,
-                    0.003,
-                    out,
-                );
-            }
-            for j in 0..3 {
-                let p = point(time * 0.5 + j as f32 * TAU / 3.);
-                view.mesh(&self.node, p, [0.075; 3], [1., 0.8, 0.32], time, out);
-            }
-        }
         let world = view;
+        let breathe = (time * 1.5).sin();
+        let weight = (phase * TAU).sin();
+        let offset = [weight * 0.035, -0.015 + 0.015 * breathe, 0.];
+        let lean = 0.035 + reach * 0.06;
         let view = View {
+            model: Rotation::new(lean, yaw + 0.08 * reach),
+            pivot: [0., -0.35, 0.],
+            offset,
+            ..world
+        };
+        let hips = View {
             model: Rotation::new(0., yaw),
-            ..view
+            offset,
+            ..world
         };
         let face = View {
-            model: Rotation::new(0., yaw + (delta * (1. - ease)).clamp(-0.45, 0.45)),
-            ..view
+            model: Rotation::new(
+                lean + 0.035 * (time * 0.8).sin(),
+                yaw + (delta * (1. - ease)).clamp(-0.45, 0.45),
+            ),
+            pivot: [0., 0.9, 0.],
+            offset,
+            ..world
         };
         let gold = [0.91, 0.48, 0.1];
-        let bob = (time * 0.7).sin() * 0.045;
-        let head = [0., 1.13 + bob, 0.];
-        face.mesh(&self.body, head, [0.29, 0.38, 0.27], gold, 0., out);
+        let head = [0., 1.18, 0.];
         view.mesh(
-            &self.body,
-            [0., 0.38 + bob, 0.],
-            [0.43, 0.62, 0.24],
+            &self.torso,
+            [0.; 3],
+            [1. + breathe * 0.014, 1., 1. + breathe * 0.035],
             gold,
             0.,
             out,
         );
-        view.mesh(
+        hips.mesh(
             &self.body,
-            [0., -0.3 + bob, 0.],
-            [0.3, 0.29, 0.23],
+            [0., -0.35, 0.],
+            [0.3, 0.23, 0.21],
             gold,
             0.,
             out,
         );
+        view.limb([0., 0.83, 0.], [0., 1.02, 0.], 0.115, gold, out);
+        face.mesh(&self.head, head, [1.; 3], gold, 0., out);
+        let blink_phase = (time + 1.8).rem_euclid(4.6);
+        let eyelid = if blink_phase < 0.20 {
+            (blink_phase / 0.10 - 1.).abs().max(0.15)
+        } else {
+            1.
+        };
         for side in [-1., 1.] {
-            let shoulder = [side * 0.42, 0.65 + bob, 0.];
-            let elbow = if side > 0. {
-                [0.6, 0.45 + bob + reach * 0.3, 0.2 + reach * 0.55]
+            let shoulder = [side * 0.43, 0.65 + side * weight * 0.025, 0.];
+            let hand_target = if side > 0. {
+                [0.3, 0.57 + reach * 0.32, 0.35 + reach * 0.67]
             } else {
-                [-0.75, 0.15 + bob, 0.2]
+                [-0.75, 0.03 + 0.12 * (time * 0.7).sin(), 0.3 + reach * 0.12]
             };
-            let hand = if side > 0. {
-                [0.3, 0.55 + bob + reach * 0.4, 0.5 + reach * 1.25]
-            } else {
-                [-0.8, 0.05 + bob, 0.45 + reach * 0.2]
-            };
+            let (elbow, hand) =
+                character::bend_joint(shoulder, hand_target, 0.56, 0.55, [side, 0., 0.]);
+            view.limb(shoulder, elbow, 0.135, gold, out);
+            view.limb(elbow, hand, 0.10, gold, out);
+            view.mesh(&self.body, shoulder, [0.15; 3], gold, 0., out);
+            view.mesh(&self.body, elbow, [0.10; 3], gold, 0., out);
+            view.mesh(&self.body, hand, [0.105, 0.135, 0.065], gold, 0., out);
             if side > 0. && reach > 0.45 {
                 world.line(
-                    view.model.apply(hand),
+                    view.world_point(hand),
                     mul(target, 0.98),
                     [0.05, reach * 0.7, reach],
                     0.002,
                     out,
                 );
             }
-            view.limb(shoulder, elbow, 0.13, gold, out);
-            view.limb(elbow, hand, 0.10, gold, out);
-            view.mesh(&self.body, hand, [0.12, 0.15, 0.1], gold, 0., out);
             for finger in 0..4 {
-                let base = add(hand, [side * (finger as f32 - 1.5) * 0.045, 0.1, 0.]);
-                let curl = 0.035 + 0.045 * (time * 0.8 + finger as f32 * 0.3).sin();
-                let joint = add(base, [side * (finger as f32 - 1.5) * 0.015, 0.09, curl]);
-                let tip = add(joint, [0., 0.06, curl]);
-                view.limb(base, joint, 0.022, gold, out);
-                view.limb(joint, tip, 0.018, gold, out);
+                let length = [0.105, 0.13, 0.12, 0.09][finger];
+                let base = add(hand, [side * (finger as f32 - 1.5) * 0.041, 0.105, 0.]);
+                let curl =
+                    0.035 + 0.045 * (time * 0.85 + finger as f32 * 0.45).sin() * (1. - reach * 0.6);
+                let first = add(
+                    base,
+                    [
+                        side * (finger as f32 - 1.5) * 0.008,
+                        length * 0.5,
+                        curl * 0.35,
+                    ],
+                );
+                let second = add(first, [0., length * 0.32, curl * 0.6]);
+                let tip = add(second, [0., length * 0.18, curl * 0.5]);
+                view.limb(base, first, 0.018, gold, out);
+                view.limb(first, second, 0.015, gold, out);
+                view.limb(second, tip, 0.012, gold, out);
             }
             view.limb(
-                add(hand, [-side * 0.09, 0., 0.]),
-                add(hand, [-side * 0.17, 0.08, 0.04]),
-                0.03,
+                add(hand, [-side * 0.075, 0.015, 0.]),
+                add(hand, [-side * 0.15, 0.09, 0.035]),
+                0.025,
                 gold,
                 out,
             );
-            view.mesh(&self.body, elbow, [0.13; 3], gold, 0., out);
-            let hip = [side * 0.17, -0.43 + bob, 0.];
-            let knee = [side * 0.3, -1.02 + bob, 0.05];
-            let foot = [side * 0.47, -1.65 + bob, 0.12];
-            view.limb(hip, knee, 0.16, gold, out);
-            view.limb(knee, foot, 0.11, gold, out);
-            view.mesh(&self.body, foot, [0.13, 0.11, 0.22], gold, 0., out);
-            let eye = [side * 0.105, 1.22 + bob, 0.245];
+            let progress = ((phase - if side < 0. { 0. } else { 0.24 }) / 0.24).clamp(0., 1.);
+            let smooth = progress * progress * (3. - 2. * progress);
+            let foot_yaw = previous_yaw + delta * smooth;
+            let lift = (progress * PI).sin().max(0.);
+            let foot_rotation = Rotation::new(0., foot_yaw);
+            let foot_target = add(
+                foot_rotation.apply([side * 0.3, -1.60, 0.14]),
+                [0., 0.23 * lift, 0.],
+            );
+            let hip = hips.world_point([side * 0.16, -0.43, 0.]);
+            let (knee, foot) = character::bend_joint(
+                hip,
+                foot_target,
+                0.58,
+                0.61,
+                foot_rotation.apply([0., 0., 1.]),
+            );
+            world.limb(hip, knee, 0.155, gold, out);
+            world.limb(knee, foot, 0.105, gold, out);
+            world.mesh(&self.body, knee, [0.10; 3], gold, 0., out);
+            let foot_view = View {
+                model: Rotation::new(-0.3 * lift, foot_yaw),
+                pivot: foot,
+                ..world
+            };
+            foot_view.mesh(&self.body, foot, [0.105, 0.075, 0.22], gold, 0., out);
+            let eye = add(head, [side * 0.095, 0.07, 0.19]);
             face.mesh(
-                &self.node,
+                &self.body,
                 eye,
-                [0.07, 0.035, 0.035],
-                [0.25, 0.9, 1.],
+                [0.06, 0.023 * eyelid, 0.026],
+                [0.12, 0.75, 0.95],
+                0.,
+                out,
+            );
+            face.mesh(
+                &self.body,
+                add(
+                    eye,
+                    [0.012 * (delta * (1. - ease)).clamp(-1., 1.), 0., 0.025],
+                ),
+                [0.019, 0.019 * eyelid, 0.008],
+                [0.65, 1., 1.],
+                0.,
+                out,
+            );
+            face.mesh(
+                &self.body,
+                add(eye, [0., 0.055 + reach * 0.012, 0.]),
+                [0.075, 0.016, 0.025],
+                gold,
+                0.,
+                out,
+            );
+            face.mesh(
+                &self.body,
+                add(head, [side * 0.23, 0.015, -0.015]),
+                [0.035, 0.085, 0.045],
+                gold,
                 0.,
                 out,
             );
             let circuit = [
-                [side * 0.1, 0.85 + bob, 0.15],
-                [side * 0.25, 0.65 + bob, 0.21],
-                [side * 0.25, 0.25 + bob, 0.23],
-                [side * 0.13, 0.1 + bob, 0.24],
-                [side * 0.13, -0.15 + bob, 0.23],
+                [side * 0.11, 0.78, 0.18],
+                [side * 0.28, 0.58, 0.23],
+                [side * 0.23, 0.23, 0.22],
+                [side * 0.12, 0.08, 0.2],
+                [side * 0.12, -0.18, 0.16],
             ];
             for pair in circuit.windows(2) {
-                view.line(pair[0], pair[1], [1., 0.72, 0.24], 0.0035, out);
+                view.line(pair[0], pair[1], [1., 0.72, 0.24], 0.0025, out);
             }
-            view.line(shoulder, elbow, [1., 0.66, 0.13], 0.003, out);
-            view.line(elbow, hand, [1., 0.66, 0.13], 0.003, out);
+            face.line(
+                add(head, [side * 0.17, 0.23, 0.13]),
+                add(head, [side * 0.14, 0.13, 0.18]),
+                [1., 0.65, 0.14],
+                0.0018,
+                out,
+            );
+            face.line(
+                add(head, [side * 0.16, -0.03, 0.15]),
+                add(head, [side * 0.12, -0.19, 0.17]),
+                [1., 0.65, 0.14],
+                0.0018,
+                out,
+            );
         }
-        face.triangle(
-            [
-                [-0.075, 1.04 + bob, 0.25],
-                [0.075, 1.04 + bob, 0.25],
-                [0., 0.96 + bob, 0.23],
-            ],
-            [0.06, 0.025, 0.015],
+        let mouth = add(head, [0., -0.16, 0.19]);
+        let opening = 0.008 + 0.016 * reach * (0.5 + 0.5 * (time * 4.3).sin());
+        face.mesh(
+            &self.body,
+            mouth,
+            [0.075, opening, 0.022],
+            [0.06, 0.018, 0.01],
+            0.,
             out,
         );
         face.mesh(
-            &self.node,
-            [0., 1.15 + bob, 0.27],
-            [0.045, 0.08, 0.065],
+            &self.body,
+            add(mouth, [0., opening + 0.009, 0.005]),
+            [0.082, 0.011, 0.024],
+            [0.8, 0.30, 0.07],
+            0.,
+            out,
+        );
+        face.mesh(
+            &self.body,
+            add(mouth, [0., -opening - 0.009, 0.005]),
+            [0.07, 0.013, 0.024],
             gold,
             0.,
             out,
         );
-        for i in 0..5 {
-            let y = 0.98 + i as f32 * 0.095 + bob;
-            let width = 0.24 * (1. - ((y - head[1]) / 0.43).powi(2)).max(0.).sqrt();
-            face.line(
-                [-width, y, 0.18],
-                [0., y + 0.03, 0.275],
-                [1., 0.61, 0.1],
-                0.0018,
-                out,
-            );
-            face.line(
-                [0., y + 0.03, 0.275],
-                [width, y, 0.18],
-                [1., 0.61, 0.1],
-                0.0018,
-                out,
-            );
-        }
     }
 }
 #[derive(Clone, Copy)]
@@ -353,11 +420,19 @@ struct View<'a> {
     right: Vec3,
     up: Vec3,
     model: Rotation,
+    pivot: Vec3,
+    offset: Vec3,
 }
 const NEAR: f32 = 0.18;
 impl View<'_> {
+    fn world_point(&self, p: Vec3) -> Vec3 {
+        add(
+            add(self.model.apply(sub(p, self.pivot)), self.pivot),
+            self.offset,
+        )
+    }
     fn camera_point(&self, p: Vec3) -> Vec3 {
-        let v = sub(self.model.apply(p), self.eye);
+        let v = sub(self.world_point(p), self.eye);
         [dot(v, self.right), dot(v, self.up), dot(v, self.forward)]
     }
     fn project(&self, p: Vec3) -> [f32; 4] {
@@ -490,7 +565,7 @@ impl View<'_> {
                 )
             });
             let n = self.model.apply(n);
-            if dot(n, sub(self.eye, self.model.apply(points[0]))) <= 0. {
+            if dot(n, sub(self.eye, self.world_point(points[0]))) <= 0. {
                 continue;
             }
             let light = 0.22 + 0.65 * dot(n, [-0.36, 0.48, 0.8]).max(0.);
@@ -508,23 +583,47 @@ impl View<'_> {
     }
     fn limb(&self, a: Vec3, b: Vec3, radius: f32, rgb: Vec3, out: &mut Vec<Vertex>) {
         let axis = unit(sub(b, a));
-        let u = unit(cross(axis, [0., 0., 1.]));
+        let u = unit(cross(
+            axis,
+            if axis[2].abs() < 0.9 {
+                [0., 0., 1.]
+            } else {
+                [0., 1., 0.]
+            },
+        ));
         let v = cross(axis, u);
-        for i in 0..6 {
-            let radial = |i: usize| {
+        let profile: &[(f32, f32)] = if radius > 0.06 {
+            &[(0., 0.72), (0.32, 1.), (0.68, 0.85), (1., 0.55)]
+        } else {
+            &[(0., 1.), (1., 0.8)]
+        };
+        let sides = if radius > 0.06 { 8 } else { 5 };
+        for rings in profile.windows(2) {
+            let point = |t: f32, r: f32, i: usize| {
                 add(
-                    mul(u, (TAU * i as f32 / 6.).cos()),
-                    mul(v, (TAU * i as f32 / 6.).sin()),
+                    add(a, mul(sub(b, a), t)),
+                    mul(
+                        add(
+                            mul(u, (TAU * i as f32 / sides as f32).cos()),
+                            mul(v, (TAU * i as f32 / sides as f32).sin()),
+                        ),
+                        radius * r,
+                    ),
                 )
             };
-            let r = mul(radial(i), radius);
-            let s = mul(radial(i + 1), radius);
-            let color = mul(
-                rgb,
-                0.28 + 0.65 * dot(self.model.apply(radial(i)), [-0.36, 0.48, 0.8]).max(0.),
-            );
-            self.triangle([add(a, r), add(b, r), add(b, s)], color, out);
-            self.triangle([add(a, r), add(b, s), add(a, s)], color, out);
+            for i in 0..sides {
+                let p = point(rings[0].0, rings[0].1, i);
+                let q = point(rings[0].0, rings[0].1, i + 1);
+                let r = point(rings[1].0, rings[1].1, i);
+                let s = point(rings[1].0, rings[1].1, i + 1);
+                let n = self.model.apply(normal(p, q, r));
+                if dot(n, sub(self.eye, self.world_point(p))) <= 0. {
+                    continue;
+                }
+                let light = 0.25 + 0.65 * dot(n, [-0.36, 0.48, 0.8]).max(0.);
+                self.triangle([p, q, r], mul(rgb, light), out);
+                self.triangle([q, s, r], mul(rgb, light), out);
+            }
         }
     }
 }

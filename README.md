@@ -33,8 +33,7 @@ and shared libraries leave the host runtime and fbterm installation intact.
 
 `./poulygon cybersphere` opens an animated communication sphere inspired by
 Cyber Jobe's cyberspace in *The Lawnmower Man*. A faceted gold figure moves its
-arms and fingers inside a blue honeycomb shell, with illuminated panels, an orbiting ring
-and traveling signal pulses. The camera orbits inside the shell. The figure turns its body and face toward
+arms and fingers inside a blue honeycomb shell, with illuminated panels and traveling signal pulses. The camera orbits inside the shell. The figure turns its body and face toward
 successive panels, reaches out and sends a signal as each selected panel lights
 up. The shell uses thin outlines, with filled panels for active signals.
 Frustum clipping removes geometry outside the camera view before submission. Geometry and colors are generated locally; no film images,
@@ -42,8 +41,11 @@ textures, neural models or additional runtime dependencies are included.
 
 This is a fixed artistic scene, separate from the workload explorer. It uses the
 same display lifecycle, native resolution, quit keys and measurement logs.
-The honeycomb comes from the dual of a subdivided icosahedron; the figure uses
-flat-shaded solids, jointed limbs and geometric circuit traces. Bright lines
+The honeycomb uses 42 cells to leave more rendering budget for the figure.
+The head and torso have shaped contours, with eye sockets, a nose, lips and ears.
+Blinking, breathing and head turns accompany the reaching gestures. Two-bone
+joint constraints keep the arms and legs at fixed lengths. Alternating steps
+include knee bends and heel lifts, while the torso shifts weight and leans. Bright lines
 are thin triangles, and metallic highlights are calculated per face on the CPU.
 There is no bloom or reflective-material pass.
 

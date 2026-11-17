@@ -1,13 +1,17 @@
 #!/bin/bash
 set -euo pipefail
-if (( $# )); then
-    echo 'Usage: poulygon (Q or Escape exits; switching consoles also exits)' >&2
+if (( $# > 1 )) || [[ ${1:-explore} != explore && ${1:-explore} != cube ]]; then
+    echo 'Usage: poulygon [explore|cube] (Q or Escape exits; switching consoles also exits)' >&2
     exit 2
 fi
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-log="$root/poulygon.log"
+base="${XDG_STATE_HOME:-$HOME/.local/state}/poulygon/runs"
+mkdir -p -- "$base"
+run=$(mktemp -d "$base/$(date +%Y%m%d-%H%M%S)-XXXXXX")
+log="$run/native.log"
+echo "Poulygon logs: $run"
 # A spare VT lets fbterm release its display ownership before the game starts.
-printf -v renderer '%q ' "$root/lib/ld-linux.so.2" --library-path "$root/lib" "$root/bin/facet"
+printf -v renderer '%q ' "$root/lib/ld-linux.so.2" --library-path "$root/lib" "$root/bin/facet" "${1:-explore}" --run-dir "$run"
 printf -v quoted_log '%q' "$log"
 # openvt replaces stderr, so redirect after it attaches the new console.
 printf -v command '%q ' systemd-inhibit --what=idle --mode=block --who=Poulygon \

@@ -35,9 +35,22 @@ struct facet {
     drmModeCrtc *saved;
     struct termios termios;
     struct vt_mode vt;
+    uint32_t (*words)[8];
     bool terminal_saved, vt_saved, master, shown, pending, lost;
 };
 static volatile sig_atomic_t stop, release_vt;
+
+uint32_t facet_vertex_capacity(void)
+{
+    return (POULSBACK_FRAME_VERTEX_BYTES / sizeof(struct facet_vertex)) / 3u * 3u;
+}
+
+static double milliseconds(void)
+{
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return now.tv_sec * 1000.0 + now.tv_nsec / 1e6;
+}
 
 double facet_cpu_seconds(void)
 {
@@ -244,6 +257,8 @@ struct facet *facet_open(uint32_t *width, uint32_t *height)
     struct facet *f = calloc(1, sizeof(*f));
     if (!f) return NULL;
     f->fd = -1;
+    f->words = calloc(facet_vertex_capacity(), sizeof(*f->words));
+    if (!f->words) { free(f); return NULL; }
     int ret = display_open(f);
     if (ret) goto failed;
     struct sigaction action = {.sa_handler = interrupted};
@@ -293,7 +308,8 @@ failed:
     return NULL;
 }
 
-int facet_frame(struct facet *f, const struct facet_vertex *vertices, uint32_t count)
+int facet_frame(struct facet *f, const struct facet_vertex *vertices, uint32_t count,
+                struct facet_metrics *metrics)
 {
     if (stop) return 0;
     struct pollfd keyboard = {.fd = 0, .events = POLLIN};
@@ -303,22 +319,36 @@ int facet_frame(struct facet *f, const struct facet_vertex *vertices, uint32_t c
         for (ssize_t i = 0; i < n; ++i)
             if (keys[i] == 'q' || keys[i] == 'Q' || keys[i] == 27 || keys[i] == 3) return 0;
     }
-    if (!count || count > 36 || count % 3) return error("vertex span", EINVAL);
-    uint32_t words[36][8];
+    memset(metrics, 0, sizeof(*metrics));
+    if (!count || count % 3) return error("vertex span", EINVAL);
+    if (count > facet_vertex_capacity()) return 2; /* Refused before submission. */
+    double started = milliseconds();
     _Static_assert(sizeof(struct facet_vertex) == 32, "Rust/C vertex layout");
-    memcpy(words, vertices, count * sizeof(*vertices));
-    struct poulsback_frame_vertices in = {
-        .count = count, .window = &words[0][0], .clip_w = &words[0][3], .rgba = &words[0][4],
-        .window_stride = 8, .clip_stride = 8, .rgba_stride = 8};
+    memcpy(f->words, vertices, count * sizeof(*vertices));
     poulsback_frame_begin(f->writer, &f->pds, &f->vertices);
-    int ret = poulsback_frame_draw(f->writer, &f->shape, &in);
-    if (ret) return error("construct draw", -ret);
+    int ret;
+    const uint32_t batch = POULSBACK_FRAME_MAX_VERTICES / 3u * 3u;
+    for (uint32_t offset = 0; offset < count;) {
+        uint32_t size = count - offset < batch ? count - offset : batch;
+        if (metrics->draws == POULSBACK_FRAME_MAX_DRAWS) return 2;
+        struct poulsback_frame_vertices in = {
+            .count = size, .window = &f->words[offset][0], .clip_w = &f->words[offset][3],
+            .rgba = &f->words[offset][4], .window_stride = 8, .clip_stride = 8, .rgba_stride = 8};
+        ret = poulsback_frame_draw(f->writer, &f->shape, &in);
+        if (ret == -E2BIG || ret == -ENOSPC) return 2;
+        if (ret) return error("construct draw", -ret);
+        metrics->draws++;
+        offset += size;
+    }
     struct poulsback_frame_buffer target = {
         f->color[f->next].handle, f->stride, f->color[f->next].gpu_va, f->color[f->next].size};
     struct poulsback_frame_buffer depth = {f->depth.handle, 0, f->depth.gpu_va, f->depth.size};
     struct poulsback_frame_job job;
     ret = poulsback_frame_end(f->writer, &target, &depth, &job);
+    if (ret == -E2BIG || ret == -ENOSPC) return 2;
     if (ret) return error("construct frame", -ret);
+    metrics->construct_ms = milliseconds() - started;
+    started = milliseconds();
     if (drmSyncobjReset(f->fd, &f->syncobj, 1)) return error("reset completed fence", errno);
     struct poulsback_submit submit = {
         .abi = POULSBACK_EXEC_ABI, .context = f->context, .width = job.width, .height = job.height,
@@ -330,8 +360,12 @@ int facet_frame(struct facet *f, const struct facet_vertex *vertices, uint32_t c
         f->lost = saved_errno == EIO;
         return error("submit", saved_errno);
     }
+    metrics->submit_ms = milliseconds() - started;
+    started = milliseconds();
     ret = render_complete(f);
     if (ret) { f->lost = true; return error("render completion; no retry", -ret); }
+    metrics->completion_ms = milliseconds() - started;
+    started = milliseconds();
     if (!f->shown) {
         if (drmModeSetCrtc(f->fd, f->saved->crtc_id, f->fb[f->next], 0, 0, &f->connector,
                            1, &f->saved->mode)) {
@@ -349,6 +383,7 @@ int facet_frame(struct facet *f, const struct facet_vertex *vertices, uint32_t c
         ret = wait_flip(f);
         if (ret) { f->lost = true; return error("page flip completion; no retry", -ret); }
     }
+    metrics->present_ms = milliseconds() - started;
     f->next ^= 1u;
     return 1;
 }
@@ -392,6 +427,7 @@ int facet_close(struct facet *f)
     }
     if (f->saved) drmModeFreeCrtc(f->saved);
     if (f->fd >= 0) close(f->fd);
+    free(f->words);
     free(f);
     return result;
 }

@@ -1,114 +1,227 @@
 // SPDX-License-Identifier: MIT
 // Copyright 2026 DoubleDensity <doubledense@gmail.com>
-use std::ffi::c_void;
-use std::io::Write;
-use std::time::Instant;
+mod cube;
+mod engine;
+mod explorer;
+mod platform;
+mod scene;
+mod telemetry;
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct Vertex { position: [f32; 4], color: [f32; 4] }
-extern "C" {
-    fn facet_open(width: *mut u32, height: *mut u32) -> *mut c_void;
-    fn facet_frame(display: *mut c_void, vertices: *const Vertex, count: u32) -> i32;
-    fn facet_close(display: *mut c_void) -> i32;
-    fn facet_cpu_seconds() -> f64;
-}
+use engine::{Camera, Clock};
+use explorer::Explorer;
+use platform::{Display, Vertex};
+use scene::Scene;
+use std::{path::PathBuf, time::Instant};
+use telemetry::{quote, Log, Sample, Window};
 
-const STEP: f64 = 1.0 / 120.0;
-const CORNERS: [[f32; 3]; 8] = [
-    [-1., -1., -1.], [1., -1., -1.], [1., 1., -1.], [-1., 1., -1.],
-    [-1., -1., 1.], [1., -1., 1.], [1., 1., 1.], [-1., 1., 1.],
-];
-const FACES: [[usize; 4]; 6] = [
-    [0, 3, 2, 1], [4, 5, 6, 7], [0, 4, 7, 3],
-    [1, 2, 6, 5], [0, 1, 5, 4], [3, 7, 6, 2],
-];
-const NORMALS: [[f32; 3]; 6] = [
-    [0., 0., -1.], [0., 0., 1.], [-1., 0., 0.],
-    [1., 0., 0.], [0., -1., 0.], [0., 1., 0.],
-];
-const COLORS: [[f32; 3]; 6] = [
-    [0.95, 0.22, 0.52], [0.16, 0.83, 0.95], [0.95, 0.53, 0.12],
-    [0.58, 0.32, 0.95], [0.30, 0.86, 0.42], [0.95, 0.85, 0.45],
-];
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-// Simulation advances on numbered ticks; rendering may run at a different rate.
-struct Simulation { tick: u64, remainder: f64 }
-impl Simulation {
-    fn advance(&mut self, elapsed: f64) {
-        self.remainder += elapsed;
-        let steps = (self.remainder / STEP).floor() as u64;
-        self.tick += steps;
-        self.remainder -= steps as f64 * STEP;
-    }
-    fn time(&self) -> f32 { (self.tick as f64 * STEP + self.remainder) as f32 }
-}
-
-fn cube(time: f32, aspect: f32, out: &mut [Vertex; 36]) -> usize {
-    let (sy, cy) = (time * 0.55).sin_cos();
-    let (sx, cx) = (time * 0.31).sin_cos();
-    let rotate = |v: [f32; 3]| {
-        let x = cy * v[0] + sy * v[2];
-        let z = -sy * v[0] + cy * v[2];
-        [x, cx * v[1] - sx * z, sx * v[1] + cx * z]
-    };
-    let mut clip = [[0.; 4]; 8];
-    for (i, point) in CORNERS.iter().enumerate() {
-        let p = rotate(*point);
-        let distance = 5.0 - p[2];
-        // Perspective with near=1, far=20. The GPU clips and maps to the viewport.
-        clip[i] = [p[0] * 2.4 / aspect, p[1] * 2.4,
-                   (21.0 * distance - 40.0) / 19.0, distance];
-    }
-    let mut count = 0;
-    for face in 0..6 {
-        let n = rotate(NORMALS[face]);
-        // The camera is at (0, 0, 5); each cube face lies one unit from its center.
-        if 5.0 * n[2] <= 1.0 { continue; }
-        let light = 0.24 + 0.76 * (n[0] * -0.36 + n[1] * 0.48 + n[2] * 0.8).max(0.);
-        let rgb = COLORS[face];
-        let color = [rgb[0] * light, rgb[1] * light, rgb[2] * light, 1.];
-        for (j, corner) in [0, 1, 2, 0, 2, 3].iter().enumerate() {
-            out[count + j] = Vertex { position: clip[FACES[face][*corner]], color };
+fn next_scene(explorer: &mut Explorer, capacity: usize, log: &mut Log) -> Result<Scene> {
+    loop {
+        let config = explorer.config();
+        match Scene::new(config, capacity) {
+            Ok(scene) => {
+                log.event(
+                    "scene",
+                    &format!(
+                        "{},\"source_vertices\":{}",
+                        config.json(),
+                        scene.source_vertices
+                    ),
+                )?;
+                return Ok(scene);
+            }
+            Err(reason) => {
+                log.event(
+                    "capacity_refusal",
+                    &format!("{},\"reason\":{}", config.json(), quote(reason)),
+                )?;
+                if config.level == 1 {
+                    return Err("baseline scene exceeds renderer capacity".into());
+                }
+                explorer.result(false);
+            }
         }
-        count += 6;
     }
-    count
 }
 
-fn main() {
-    let (mut width, mut height) = (0, 0);
-    let display = unsafe { facet_open(&mut width, &mut height) };
-    if display.is_null() { std::process::exit(1); }
-    let mut vertices = [Vertex { position: [0.; 4], color: [0.; 4] }; 36];
-    let mut sim = Simulation { tick: 0, remainder: 0. };
-    let start = Instant::now();
-    let mut previous = start;
+fn play(display: &mut Display, log: &mut Log, app: &str) -> Result<()> {
+    let camera = Camera {
+        aspect: display.width as f32 / display.height as f32,
+    };
+    let mut clock = Clock::new();
+    let mut explorer = Explorer::new();
+    let mut scene = next_scene(&mut explorer, display.capacity(), log)?;
+    let mut vertices = Vec::with_capacity(display.capacity());
+    let mut cube_vertices = [Vertex::default(); 36];
+    let mut window = Window::new();
+    let mut previous = Instant::now();
+    let mut presented = previous;
+    let mut settled = previous;
+    let (mut rolling_seconds, mut rolling_frames, mut rolling_missed) = (0.0, 0u32, 0u32);
     let mut frames = 0u64;
-    let mut report = start;
-    let mut report_frames = 0;
-    let mut cpu = unsafe { facet_cpu_seconds() };
-    let failed = loop {
+    loop {
         let now = Instant::now();
-        sim.advance(now.duration_since(previous).as_secs_f64());
+        clock.advance(now.duration_since(previous).as_secs_f64(), |dt| {
+            if app == "explore" {
+                scene.update(dt);
+            }
+        });
         previous = now;
-        let count = cube(sim.time(), width as f32 / height as f32, &mut vertices);
-        let result = unsafe { facet_frame(display, vertices.as_ptr(), count as u32) };
-        if result <= 0 { break result < 0; }
-        frames += 1;
-        let now = Instant::now();
-        let seconds = now.duration_since(report).as_secs_f64();
-        if seconds >= 5.0 {
-            let new_cpu = unsafe { facet_cpu_seconds() };
-            let _ = writeln!(std::io::stderr().lock(), "facet: {:.1} fps, {:.1}% CPU, {} frames, tick {}",
-                (frames - report_frames) as f64 / seconds, (new_cpu - cpu) * 100.0 / seconds,
-                frames, sim.tick);
-            cpu = new_cpu;
-            report = now;
-            report_frames = frames;
+        let simulation = now.elapsed().as_secs_f64() * 1000.0;
+        let geometry_start = Instant::now();
+        let span = if app == "cube" {
+            let count = cube::draw(clock.time(), camera.aspect, &mut cube_vertices);
+            &cube_vertices[..count]
+        } else {
+            scene.draw(&camera, &mut vertices);
+            &vertices[..]
+        };
+        let geometry = geometry_start.elapsed().as_secs_f64() * 1000.0;
+        let (result, native) = display.frame(span)?;
+        if result == 0 {
+            break;
         }
-    };
-    let cleanup = unsafe { facet_close(display) };
-    let _ = writeln!(std::io::stderr().lock(), "facet: {} frames in {:.2}s", frames, start.elapsed().as_secs_f64());
-    if failed || cleanup != 0 { std::process::exit(1); }
+        if result == 2 {
+            log.event(
+                "capacity_refusal",
+                &format!(
+                    "{},\"reason\":\"native frame construction\"",
+                    scene.config.json()
+                ),
+            )?;
+            if app == "cube" || scene.config.level == 1 {
+                return Err("baseline frame refused".into());
+            }
+            explorer.result(false);
+        } else {
+            frames += 1;
+            let end = Instant::now();
+            let interval = end.duration_since(presented).as_secs_f64() * 1000.0;
+            presented = end;
+            if settled.elapsed().as_secs_f64() < 2.0 {
+                continue;
+            }
+            window.push(Sample {
+                interval,
+                simulation,
+                geometry,
+                native,
+                vertices: span.len(),
+            });
+            rolling_seconds += interval / 1000.0;
+            rolling_frames += 1;
+            rolling_missed += u32::from(interval > 35.0);
+            let slow = rolling_seconds >= 1.0
+                && (rolling_frames as f64 / rolling_seconds < 27.0
+                    || rolling_missed * 5 > rolling_frames);
+            if slow && app == "explore" {
+                log.event(
+                    "sustained_slowdown",
+                    &format!(
+                        "{},\"fps\":{},\"seconds\":{},\"frames\":{},\"over_35ms\":{}",
+                        scene.config.json(),
+                        rolling_frames as f64 / rolling_seconds,
+                        rolling_seconds,
+                        rolling_frames,
+                        rolling_missed
+                    ),
+                )?;
+                explorer.result(false);
+            } else {
+                if rolling_seconds >= 1.0 {
+                    rolling_seconds = 0.0;
+                    rolling_frames = 0;
+                    rolling_missed = 0;
+                }
+                if !window.ready() {
+                    continue;
+                }
+                let (pass, mut fields, text) = window.report(&scene.config);
+                if app == "cube" {
+                    fields = fields.replace("\"family\":\"geometry\"", "\"family\":\"cube\"");
+                }
+                log.event("window", &fields)?;
+                eprintln!("{}", text.trim());
+                let transition = if app == "explore" {
+                    explorer.result(pass)
+                } else {
+                    None
+                };
+                log.summary(&if app == "cube" {
+                    text.replace("geometry at level 1", "Cube")
+                } else {
+                    explorer.summary(&text)
+                })?;
+                window.clear();
+                if let Some(reason) = transition {
+                    log.event(
+                        "transition",
+                        &format!("\"reason\":{},{}", quote(reason), explorer.config().json()),
+                    )?;
+                } else {
+                    continue;
+                }
+            }
+        }
+        scene = next_scene(&mut explorer, display.capacity(), log)?;
+        window.clear();
+        rolling_seconds = 0.0;
+        rolling_frames = 0;
+        rolling_missed = 0;
+        clock = Clock::new();
+        previous = Instant::now();
+        presented = previous;
+        settled = previous;
+    }
+    log.event(
+        "stopped",
+        &format!("\"frames\":{},\"simulation_tick\":{}", frames, clock.tick),
+    )?;
+    Ok(())
+}
+
+fn run() -> Result<()> {
+    let mut args = std::env::args().skip(1);
+    let app = args.next().unwrap_or_else(|| "explore".into());
+    if app != "cube" && app != "explore" {
+        return Err("choose cube or explore".into());
+    }
+    if args.next().as_deref() != Some("--run-dir") {
+        return Err("launch with the packaged poulygon script".into());
+    }
+    let directory = PathBuf::from(args.next().ok_or("missing run directory")?);
+    if args.next().is_some() {
+        return Err("unexpected argument".into());
+    }
+    let mut log = Log::new(directory)?;
+    let mut display = Display::open()?;
+    let result = (|| {
+        log.start(display.width, display.height, display.capacity(), &app)?;
+        play(&mut display, &mut log, &app)
+    })();
+    let cleanup = display.close();
+    log.event(
+        "exit",
+        &format!(
+            "\"playback_error\":{},\"cleanup_error\":{}",
+            quote(
+                &result
+                    .as_ref()
+                    .err()
+                    .map(ToString::to_string)
+                    .unwrap_or_default()
+            ),
+            quote(&cleanup.as_ref().err().cloned().unwrap_or_default())
+        ),
+    )?;
+    result?;
+    cleanup?;
+    Ok(())
+}
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("poulygon: {}", error);
+        std::process::exit(1);
+    }
 }

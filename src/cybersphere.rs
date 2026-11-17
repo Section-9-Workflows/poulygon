@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 use crate::{engine::*, platform::Vertex};
-use std::{collections::BTreeMap, f32::consts::TAU};
+use std::{
+    collections::BTreeMap,
+    f32::consts::{PI, TAU},
+};
 
 fn unit(v: Vec3) -> Vec3 {
     mul(v, 1. / dot(v, v).sqrt().max(1e-8))
@@ -18,6 +21,7 @@ struct Cell {
 }
 pub struct Cybersphere {
     cells: Vec<Cell>,
+    targets: Vec<usize>,
     body: Mesh,
     node: Mesh,
 }
@@ -87,7 +91,7 @@ impl Cybersphere {
             .iter()
             .map(|f| unit(add(add(points[f[0]], points[f[1]]), points[f[2]])))
             .collect();
-        let cells = points
+        let cells: Vec<Cell> = points
             .iter()
             .enumerate()
             .map(|(i, &center)| {
@@ -120,46 +124,76 @@ impl Cybersphere {
                 }
             })
             .collect();
+        let mut targets: Vec<_> = cells
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.center[1] > 0.2 && c.center[1] < 1.5)
+            .map(|(i, _)| i)
+            .collect();
+        targets.sort_by(|&a, &b| {
+            cells[a].center[0]
+                .atan2(cells[a].center[2])
+                .total_cmp(&cells[b].center[0].atan2(cells[b].center[2]))
+        });
         Self {
             cells,
+            targets,
             body: Mesh::sphere(2),
             node: Mesh::solid(false),
         }
     }
     pub fn draw(&self, time: f32, camera: &Camera, out: &mut Vec<Vertex>) {
         out.clear();
-        let orbit = Rotation::new(0.08 * (time * 0.13).sin(), 0.28 * (time * 0.17).sin());
+        let angle = time * 0.13;
+        let eye = [
+            angle.sin() * 2.15,
+            0.24 + 0.12 * (time * 0.19).sin(),
+            angle.cos() * 2.15,
+        ];
+        let forward = unit(sub([0., 0.05, 0.], eye));
+        let right = unit(cross(forward, [0., 1., 0.]));
         let view = View {
             camera,
-            orbit,
-            zoom: 1. + 0.035 * (time * 0.19).sin(),
+            eye,
+            forward,
+            right,
+            up: cross(right, forward),
+            model: Rotation::new(0., 0.),
         };
-        let shell = Rotation::new(0.16 * (time * 0.11).sin(), time * 0.065);
+        let step = (time / 7.) as usize % self.targets.len();
+        let active = self.targets[(step * 5) % self.targets.len()];
+        let previous = self.targets[((step + self.targets.len() - 1) * 5) % self.targets.len()];
+        let target = self.cells[active].center;
+        let before = self.cells[previous].center;
+        let phase = (time / 7.).fract();
+        let ease = (phase * 3.5).min(1.);
+        let ease = ease * ease * (3. - 2. * ease);
+        let previous_yaw = before[0].atan2(before[2]);
+        let delta = (target[0].atan2(target[2]) - previous_yaw + PI).rem_euclid(TAU) - PI;
+        let yaw = previous_yaw + delta * ease;
+        let reach = (phase * PI).sin().max(0.);
         for (i, cell) in self.cells.iter().enumerate() {
-            let center = shell.apply(cell.center);
+            let center = cell.center;
             let pulse = (time * 1.1 - i as f32 * 0.39).cos().max(0.).powi(12);
-            let front = view.orbit.apply(center)[2] > 0.;
-            let rgb = if front {
-                [0.035, 0.16 + 0.1 * pulse, 0.24 + 0.12 * pulse]
+            let rgb = if i == active {
+                [0.85, 0.25 + reach * 0.35, 0.08]
             } else {
                 [
-                    0.06 + 0.75 * pulse,
-                    0.24 * (1. - pulse),
-                    0.46 * (1. - pulse) + 0.07,
+                    0.05 + 0.4 * pulse,
+                    0.22 * (1. - pulse),
+                    0.4 * (1. - pulse) + 0.08,
                 ]
             };
             for j in 0..cell.corners.len() {
-                let a = shell.apply(cell.corners[j]);
-                let b = shell.apply(cell.corners[(j + 1) % cell.corners.len()]);
-                if !front {
-                    view.triangle([center, a, b], mul(rgb, 0.55), out);
-                }
-                view.line(a, b, rgb, if front { 0.0018 } else { 0.0027 }, out);
+                let a = cell.corners[j];
+                let b = cell.corners[(j + 1) % cell.corners.len()];
+                view.triangle([center, a, b], mul(rgb, 0.65), out);
+                view.line(a, b, rgb, 0.0025, out);
             }
         }
-        for ring in 0..3 {
+        for ring in 0..1 {
             let axis = Rotation::new(0.45 + ring as f32 * 0.8, time * 0.12 + ring as f32 * 0.9);
-            let point = |a: f32| axis.apply([3.15 * a.cos(), 3.15 * a.sin(), 0.]);
+            let point = |a: f32| axis.apply([2.75 * a.cos(), 2.75 * a.sin(), 0.]);
             let color = if ring == 1 {
                 [0.95, 0.39, 0.08]
             } else {
@@ -179,33 +213,19 @@ impl Cybersphere {
                 view.mesh(&self.node, p, [0.075; 3], [1., 0.8, 0.32], time, out);
             }
         }
-        for i in 0..12 {
-            let a = TAU * i as f32 / 12. + time * 0.035;
-            let start = [a.cos() * 2.8, a.sin() * 2.8, -0.6];
-            let bend = [a.cos() * 3.65, a.sin() * 2.85, -1.];
-            let end = [a.cos() * 6.4, a.sin() * 3.1, -1.8];
-            view.line(start, bend, [0.15, 0.38, 0.55], 0.002, out);
-            view.line(bend, end, [0.12, 0.3, 0.48], 0.002, out);
-            let t = (time * 0.22 + i as f32 * 0.13).fract();
-            let p = if t < 0.5 {
-                add(start, mul(sub(bend, start), t * 2.))
-            } else {
-                add(bend, mul(sub(end, bend), (t - 0.5) * 2.))
-            };
-            view.mesh(&self.node, p, [0.055; 3], [1., 0.7, 0.16], time, out);
-            view.mesh(
-                &self.node,
-                end,
-                [0.12; 3],
-                [0.75, 0.12, 0.22],
-                time * 0.3,
-                out,
-            );
-        }
+        let world = view;
+        let view = View {
+            model: Rotation::new(0., yaw),
+            ..view
+        };
+        let face = View {
+            model: Rotation::new(0., yaw + (delta * (1. - ease)).clamp(-0.45, 0.45)),
+            ..view
+        };
         let gold = [0.91, 0.48, 0.1];
         let bob = (time * 0.7).sin() * 0.045;
         let head = [0., 1.13 + bob, 0.];
-        view.mesh(&self.body, head, [0.29, 0.38, 0.27], gold, 0., out);
+        face.mesh(&self.body, head, [0.29, 0.38, 0.27], gold, 0., out);
         view.mesh(
             &self.body,
             [0., 0.38 + bob, 0.],
@@ -224,8 +244,25 @@ impl Cybersphere {
         );
         for side in [-1., 1.] {
             let shoulder = [side * 0.42, 0.65 + bob, 0.];
-            let elbow = [side * 0.88, 0.4 + bob + 0.13 * (time * 0.6).sin(), 0.06];
-            let hand = [side * 1.2, 0.86 + bob + 0.16 * (time * 0.6).sin(), 0.16];
+            let elbow = if side > 0. {
+                [0.6, 0.45 + bob + reach * 0.3, 0.2 + reach * 0.55]
+            } else {
+                [-0.75, 0.15 + bob, 0.2]
+            };
+            let hand = if side > 0. {
+                [0.3, 0.55 + bob + reach * 0.4, 0.5 + reach * 1.25]
+            } else {
+                [-0.8, 0.05 + bob, 0.45 + reach * 0.2]
+            };
+            if side > 0. && reach > 0.45 {
+                world.line(
+                    view.model.apply(hand),
+                    mul(target, 0.98),
+                    [0.05, reach * 0.7, reach],
+                    0.002,
+                    out,
+                );
+            }
             view.limb(shoulder, elbow, 0.13, gold, out);
             view.limb(elbow, hand, 0.10, gold, out);
             view.mesh(&self.body, hand, [0.12, 0.15, 0.1], gold, 0., out);
@@ -252,7 +289,7 @@ impl Cybersphere {
             view.limb(knee, foot, 0.11, gold, out);
             view.mesh(&self.body, foot, [0.13, 0.11, 0.22], gold, 0., out);
             let eye = [side * 0.105, 1.22 + bob, 0.245];
-            view.mesh(
+            face.mesh(
                 &self.node,
                 eye,
                 [0.07, 0.035, 0.035],
@@ -273,7 +310,7 @@ impl Cybersphere {
             view.line(shoulder, elbow, [1., 0.66, 0.13], 0.003, out);
             view.line(elbow, hand, [1., 0.66, 0.13], 0.003, out);
         }
-        view.triangle(
+        face.triangle(
             [
                 [-0.075, 1.04 + bob, 0.25],
                 [0.075, 1.04 + bob, 0.25],
@@ -282,7 +319,7 @@ impl Cybersphere {
             [0.06, 0.025, 0.015],
             out,
         );
-        view.mesh(
+        face.mesh(
             &self.node,
             [0., 1.15 + bob, 0.27],
             [0.045, 0.08, 0.065],
@@ -293,14 +330,14 @@ impl Cybersphere {
         for i in 0..5 {
             let y = 0.98 + i as f32 * 0.095 + bob;
             let width = 0.24 * (1. - ((y - head[1]) / 0.43).powi(2)).max(0.).sqrt();
-            view.line(
+            face.line(
                 [-width, y, 0.18],
                 [0., y + 0.03, 0.275],
                 [1., 0.61, 0.1],
                 0.0018,
                 out,
             );
-            view.line(
+            face.line(
                 [0., y + 0.03, 0.275],
                 [width, y, 0.18],
                 [1., 0.61, 0.1],
@@ -310,26 +347,72 @@ impl Cybersphere {
         }
     }
 }
+#[derive(Clone, Copy)]
 struct View<'a> {
     camera: &'a Camera,
-    orbit: Rotation,
-    zoom: f32,
+    eye: Vec3,
+    forward: Vec3,
+    right: Vec3,
+    up: Vec3,
+    model: Rotation,
 }
+const NEAR: f32 = 0.18;
 impl View<'_> {
+    fn camera_point(&self, p: Vec3) -> Vec3 {
+        let v = sub(self.model.apply(p), self.eye);
+        [dot(v, self.right), dot(v, self.up), dot(v, self.forward)]
+    }
     fn project(&self, p: Vec3) -> [f32; 4] {
-        let mut p = self.orbit.apply(mul(p, self.zoom));
-        p[2] -= 3.2;
-        self.camera.project(p)
+        [
+            p[0] * 1.15 / self.camera.aspect,
+            p[1] * 1.15,
+            (20. + NEAR) / (20. - NEAR) * p[2] - 40. * NEAR / (20. - NEAR),
+            p[2],
+        ]
     }
     fn triangle(&self, p: [Vec3; 3], rgb: Vec3, out: &mut Vec<Vertex>) {
-        for point in p {
-            out.push(Vertex {
-                position: self.project(point),
-                color: [rgb[0], rgb[1], rgb[2], 1.],
-            });
+        let p = p.map(|p| self.camera_point(p));
+        let mut clipped = [[0.; 3]; 4];
+        let mut count = 0;
+        // Clip before perspective division when the camera is inside the shell.
+        for i in 0..3 {
+            let a = p[i];
+            let b = p[(i + 1) % 3];
+            if a[2] >= NEAR {
+                clipped[count] = a;
+                count += 1;
+            }
+            if (a[2] >= NEAR) != (b[2] >= NEAR) {
+                let mut cut = add(a, mul(sub(b, a), (NEAR - a[2]) / (b[2] - a[2])));
+                cut[2] = NEAR;
+                clipped[count] = cut;
+                count += 1;
+            }
+        }
+        for i in 1..count.saturating_sub(1) {
+            for p in [clipped[0], clipped[i], clipped[i + 1]] {
+                out.push(Vertex {
+                    position: self.project(p),
+                    color: [rgb[0], rgb[1], rgb[2], 1.],
+                });
+            }
         }
     }
     fn line(&self, a: Vec3, b: Vec3, rgb: Vec3, width: f32, out: &mut Vec<Vertex>) {
+        let mut a = self.camera_point(a);
+        let mut b = self.camera_point(b);
+        if a[2] < NEAR && b[2] < NEAR {
+            return;
+        }
+        if (a[2] >= NEAR) != (b[2] >= NEAR) {
+            let mut cut = add(a, mul(sub(b, a), (NEAR - a[2]) / (b[2] - a[2])));
+            cut[2] = NEAR;
+            if a[2] < NEAR {
+                a = cut;
+            } else {
+                b = cut;
+            }
+        }
         let a = self.project(a);
         let b = self.project(b);
         let dx = (b[0] / b[3] - a[0] / a[3]) * self.camera.aspect;
@@ -378,8 +461,8 @@ impl View<'_> {
                     rotation.apply([p[0] * scale[0], p[1] * scale[1], p[2] * scale[2]]),
                 )
             });
-            let n = self.orbit.apply(n);
-            if dot(n, sub([0., 0., 8.2], self.orbit.apply(points[0]))) <= 0. {
+            let n = self.model.apply(n);
+            if dot(n, sub(self.eye, self.model.apply(points[0]))) <= 0. {
                 continue;
             }
             let light = 0.22 + 0.65 * dot(n, [-0.36, 0.48, 0.8]).max(0.);
@@ -410,7 +493,7 @@ impl View<'_> {
             let s = mul(radial(i + 1), radius);
             let color = mul(
                 rgb,
-                0.28 + 0.65 * dot(self.orbit.apply(radial(i)), [-0.36, 0.48, 0.8]).max(0.),
+                0.28 + 0.65 * dot(self.model.apply(radial(i)), [-0.36, 0.48, 0.8]).max(0.),
             );
             self.triangle([add(a, r), add(b, r), add(b, s)], color, out);
             self.triangle([add(a, r), add(b, s), add(a, s)], color, out);

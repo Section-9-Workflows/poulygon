@@ -22,6 +22,7 @@ pub fn normal(a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
     ];
     mul(n, 1.0 / dot(n, n).sqrt().max(1e-12))
 }
+#[derive(Clone, Copy)]
 pub struct Rotation {
     sx: f32,
     cx: f32,

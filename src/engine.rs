@@ -91,6 +91,86 @@ pub struct Mesh {
     pub faces: Vec<Face>,
 }
 impl Mesh {
+    pub fn solid(box_shape: bool) -> Self {
+        let points = if box_shape {
+            vec![
+                [-1., -1., -1.],
+                [1., -1., -1.],
+                [1., 1., -1.],
+                [-1., 1., -1.],
+                [-1., -1., 1.],
+                [1., -1., 1.],
+                [1., 1., 1.],
+                [-1., 1., 1.],
+            ]
+        } else {
+            vec![
+                [1., 0., 0.],
+                [-1., 0., 0.],
+                [0., 1., 0.],
+                [0., -1., 0.],
+                [0., 0., 1.],
+                [0., 0., -1.],
+            ]
+        };
+        let indices = if box_shape {
+            vec![
+                [0, 2, 1],
+                [0, 3, 2],
+                [4, 5, 6],
+                [4, 6, 7],
+                [0, 4, 7],
+                [0, 7, 3],
+                [1, 2, 6],
+                [1, 6, 5],
+                [0, 1, 5],
+                [0, 5, 4],
+                [3, 7, 6],
+                [3, 6, 2],
+            ]
+        } else {
+            vec![
+                [0, 2, 4],
+                [4, 2, 1],
+                [1, 2, 5],
+                [5, 2, 0],
+                [0, 4, 3],
+                [4, 1, 3],
+                [1, 5, 3],
+                [5, 0, 3],
+            ]
+        };
+        let faces = indices
+            .into_iter()
+            .map(|i| {
+                let mut p = [points[i[0]], points[i[1]], points[i[2]]];
+                let mut n = normal(p[0], p[1], p[2]);
+                if dot(n, p[0]) < 0. {
+                    p.swap(1, 2);
+                    n = mul(n, -1.);
+                }
+                Face {
+                    points: p,
+                    normal: n,
+                }
+            })
+            .collect();
+        Self { faces }
+    }
+    pub fn plane() -> Self {
+        Self {
+            faces: vec![
+                Face {
+                    points: [[-1., -1., 0.], [1., -1., 0.], [1., 1., 0.]],
+                    normal: [0., 0., 1.],
+                },
+                Face {
+                    points: [[-1., -1., 0.], [1., 1., 0.], [-1., 1., 0.]],
+                    normal: [0., 0., 1.],
+                },
+            ],
+        }
+    }
     pub fn sphere(detail: usize) -> Self {
         let rows = detail + 2;
         let cols = rows * 2;

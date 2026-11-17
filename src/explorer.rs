@@ -5,7 +5,7 @@ pub struct Explorer {
     pub family: usize,
     pub level: usize,
     pub cycle: u64,
-    pub safe: [usize; 7],
+    pub safe: [usize; FAMILIES.len()],
     low: usize,
     high: Option<usize>,
     passes: u8,
@@ -13,10 +13,10 @@ pub struct Explorer {
 impl Explorer {
     pub fn new() -> Self {
         Self {
-            family: 0,
+            family: 7,
             level: 1,
             cycle: 0,
-            safe: [0; 7],
+            safe: [0; FAMILIES.len()],
             low: 0,
             high: None,
             passes: 0,
@@ -28,7 +28,7 @@ impl Explorer {
     fn next_family(&mut self) {
         self.safe[self.family] = self.low;
         self.family = (self.family + 1) % FAMILIES.len();
-        if self.family == 0 {
+        if self.family == 7 {
             self.cycle += 1;
         }
         self.level = 1;

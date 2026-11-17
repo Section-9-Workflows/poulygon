@@ -43,6 +43,9 @@ Scene setup and settling do not contribute to steady-window statistics.
 
 | Family | What changes |
 |---|---|
+| Panel corridor | Growing floor/wall panel and solid counts, with faster forward travel |
+| Object field | More cubes, octahedra and low-poly spheres along a moving path |
+| Polygon city | Larger solids beside a clear central path, with corridor panels |
 | Geometry | Subdivisions of one rotating flat-shaded sphere |
 | Coverage | Projected size, through 16 size levels |
 | Overlap, front/back | Number of overlapping objects, in each submission order |
@@ -50,7 +53,10 @@ Scene setup and settling do not contribute to steady-window statistics.
 | Simulation | Active spring-driven objects, within a fixed 128-object scene |
 | Combined | Object count, using geometry and lighting levels from prior observations |
 
-Subsequent rounds vary the mixed scene. The run is repeatable from its recorded
+The three fly-through scenes run first. Each level increases object counts and
+travel speed. Speed ramps smoothly, and motion continues between fly-through
+levels. The scene wraps ahead of the camera to sustain travel without building
+an unbounded world. Later rounds also vary the speed and mixed scene. The run is repeatable from its recorded
 parameters, but it is not a claim of cross-machine floating-point determinism.
 Capacity admission uses the full unculled vertex count. It is deliberately
 conservative: a scene must fit even when rotation exposes different faces.
@@ -61,7 +67,8 @@ budget. It does not imply that the GPU has reached its performance limit.
 Logs include actual submitted vertices, triangles and draw counts; frame interval
 percentiles; CPU simulation, geometry/lighting, frame construction, submission,
 completion wait and presentation wait; process CPU use and resident memory;
-and available thermal, clock and power readings. Completion wait includes driver
+plane counts, target and actual travel speed; and available thermal, clock and
+power readings. Completion wait includes driver
 and scheduling time, so it is not an isolated GPU timing measurement. Missing
 system readings are empty strings. Run metadata includes source and driver versions.
 

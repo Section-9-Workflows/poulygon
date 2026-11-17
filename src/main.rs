@@ -51,6 +51,9 @@ fn play(display: &mut Display, log: &mut Log, app: &str) -> Result<()> {
     };
     let mut clock = Clock::new();
     let mut explorer = Explorer::new();
+    if app == "cube" {
+        explorer.family = 0;
+    }
     let mut scene = next_scene(&mut explorer, display.capacity(), log)?;
     let mut vertices = Vec::with_capacity(display.capacity());
     let mut cube_vertices = [Vertex::default(); 36];
@@ -141,6 +144,7 @@ fn play(display: &mut Display, log: &mut Log, app: &str) -> Result<()> {
                 if app == "cube" {
                     fields = fields.replace("\"family\":\"geometry\"", "\"family\":\"cube\"");
                 }
+                fields.push_str(&format!(",\"actual_speed\":{}", scene.speed()));
                 log.event("window", &fields)?;
                 eprintln!("{}", text.trim());
                 let transition = if app == "explore" {
@@ -164,7 +168,9 @@ fn play(display: &mut Display, log: &mut Log, app: &str) -> Result<()> {
                 }
             }
         }
-        scene = next_scene(&mut explorer, display.capacity(), log)?;
+        let mut next = next_scene(&mut explorer, display.capacity(), log)?;
+        next.inherit_motion(&scene);
+        scene = next;
         window.clear();
         rolling_seconds = 0.0;
         rolling_frames = 0;

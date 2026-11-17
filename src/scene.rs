@@ -2,7 +2,7 @@
 use crate::engine::*;
 use crate::platform::Vertex;
 
-pub const FAMILIES: [&str; 7] = [
+pub const FAMILIES: [&str; 10] = [
     "geometry",
     "coverage",
     "overlap_front",
@@ -10,6 +10,9 @@ pub const FAMILIES: [&str; 7] = [
     "cpu_lights",
     "simulation",
     "combined",
+    "panel_corridor",
+    "object_field",
+    "polygon_city",
 ];
 #[derive(Clone, Copy)]
 pub struct Config {
@@ -21,9 +24,11 @@ pub struct Config {
     pub lights: usize,
     pub active: usize,
     pub scale: f32,
+    pub planes: usize,
+    pub speed: f32,
 }
 impl Config {
-    pub fn new(family: usize, level: usize, cycle: u64, safe: &[usize; 7]) -> Self {
+    pub fn new(family: usize, level: usize, cycle: u64, safe: &[usize; FAMILIES.len()]) -> Self {
         let mut c = Self {
             family,
             level,
@@ -33,6 +38,8 @@ impl Config {
             lights: 1,
             active: 0,
             scale: 1.0,
+            planes: 0,
+            speed: 0.,
         };
         match family {
             0 => c.detail = level,
@@ -53,6 +60,16 @@ impl Config {
                 c.active = level.min(128);
                 c.scale = 0.17;
             }
+            7..=9 => {
+                c.objects = level.saturating_mul(if family == 8 { 24 } else { 8 });
+                c.planes = if family == 8 {
+                    0
+                } else {
+                    level.saturating_mul(32)
+                };
+                c.scale = if family == 9 { 0.5 } else { 0.3 };
+                c.speed = 1.5 + (level as f32).log2() * 1.25 + (cycle % 3) as f32 * 0.5;
+            }
             _ => {
                 // Each round rotates which previously measured axis shapes the mixed scene.
                 c.detail = (safe[0].max(1) / (2 + (cycle as usize % 3))).max(1).min(12);
@@ -72,7 +89,7 @@ impl Config {
         }
     }
     pub fn json(&self) -> String {
-        format!("\"family\":\"{}\",\"level\":{},\"cycle\":{},\"detail\":{},\"objects\":{},\"lights\":{},\"simulated\":{},\"scale\":{}",FAMILIES[self.family],self.level,self.cycle,self.detail,self.objects,self.lights,self.active,self.scale)
+        format!("\"family\":\"{}\",\"level\":{},\"cycle\":{},\"detail\":{},\"objects\":{},\"lights\":{},\"simulated\":{},\"scale\":{},\"planes\":{},\"target_speed\":{}",FAMILIES[self.family],self.level,self.cycle,self.detail,self.objects,self.lights,self.active,self.scale,self.planes,self.speed)
     }
 }
 struct Actor {
@@ -83,6 +100,10 @@ struct Actor {
 pub struct Scene {
     pub config: Config,
     mesh: Mesh,
+    solids: [Mesh; 2],
+    plane: Mesh,
+    travel: f64,
+    speed: f32,
     actors: Vec<Actor>,
     lights: Vec<Vec3>,
     time: f32,
@@ -95,9 +116,18 @@ impl Scene {
             .checked_mul(rows - 1)
             .and_then(|x| x.checked_mul(4))
             .ok_or("mesh capacity")?;
-        let vertices = triangles
-            .checked_mul(3)
-            .and_then(|n| n.checked_mul(config.objects))
+        let object_vertices = if config.family >= 7 {
+            let group = triangles.checked_mul(3).and_then(|n| n.checked_add(60));
+            group
+                .and_then(|n| n.checked_mul(config.objects / 3))
+                .and_then(|n| n.checked_add([0, 36, 60][config.objects % 3]))
+        } else {
+            triangles
+                .checked_mul(3)
+                .and_then(|n| n.checked_mul(config.objects))
+        };
+        let vertices = object_vertices
+            .and_then(|n| config.planes.checked_mul(6).and_then(|p| n.checked_add(p)))
             .ok_or("mesh capacity")?;
         // Admission uses the full mesh, so camera motion cannot overflow a previously accepted scene.
         if vertices > capacity || config.lights > capacity {
@@ -107,7 +137,22 @@ impl Scene {
         let columns = (config.objects as f32).sqrt().ceil() as usize;
         let actors = (0..config.objects)
             .map(|i| {
-                let home = if config.family == 2 || config.family == 3 {
+                let home = if config.family >= 7 {
+                    let x = ((i as f32 * 0.618034).fract() * 2. - 1.) * 5.;
+                    [
+                        if config.family == 9 {
+                            x.signum() * (x.abs() + 0.9)
+                        } else {
+                            x
+                        },
+                        if config.family == 9 {
+                            -1.2
+                        } else {
+                            ((i as f32 * 0.7548777).fract() * 2. - 1.) * 2.2
+                        },
+                        i as f32 / config.objects as f32 * 16.,
+                    ]
+                } else if config.family == 2 || config.family == 3 {
                     [0., 0., -(i as f32) * 0.015]
                 } else if config.objects == 1 {
                     [0., 0., 0.]
@@ -128,14 +173,30 @@ impl Scene {
         Ok(Self {
             config,
             mesh,
+            solids: [Mesh::solid(true), Mesh::solid(false)],
+            plane: Mesh::plane(),
+            travel: 0.,
+            speed: 0.,
             actors,
             lights: vec![[0.; 3]; config.lights],
             time: 0.,
             source_vertices: vertices,
         })
     }
+    pub fn inherit_motion(&mut self, previous: &Self) {
+        if self.config.family >= 7 && previous.config.family >= 7 {
+            self.time = previous.time;
+            self.travel = previous.travel;
+            self.speed = previous.speed;
+        }
+    }
+    pub fn speed(&self) -> f32 {
+        self.speed
+    }
     pub fn update(&mut self, dt: f32) {
         self.time += dt;
+        self.speed += (self.config.speed - self.speed) * (dt * 0.8);
+        self.travel = (self.travel + dt as f64 * self.speed as f64).rem_euclid(16.);
         for i in 0..self.config.active {
             let neighbor = if i == 0 {
                 self.actors[i].home
@@ -176,34 +237,104 @@ impl Scene {
                 0.55 + 0.4 * (hue + 2.1).sin(),
                 0.55 + 0.4 * (hue + 4.2).sin(),
             ];
-            for face in &self.mesh.faces {
-                let n = rotation.apply(face.normal);
-                let first = add(
-                    mul(rotation.apply(face.points[0]), self.config.scale),
-                    actor.pos,
-                );
-                if dot(n, sub([0., 0., 5.], first)) <= 0. {
-                    continue;
-                }
-                let mut illumination = 0.;
-                for light in &self.lights {
-                    illumination += dot(n, *light).max(0.);
-                }
-                let illumination = 0.22 + 0.78 * illumination / self.lights.len() as f32;
-                let color = [
-                    rgb[0] * illumination,
-                    rgb[1] * illumination,
-                    rgb[2] * illumination,
-                    1.,
-                ];
-                for p in face.points {
-                    out.push(Vertex {
-                        position: camera
-                            .project(add(mul(rotation.apply(p), self.config.scale), actor.pos)),
-                        color,
-                    });
-                }
+            let mut position = actor.pos;
+            if self.config.family >= 7 {
+                position[0] -= (self.time * 0.23).sin() * 0.5;
+                position[1] -= (self.time * 0.31).sin() * 0.15;
+                position[2] = 2. - (actor.home[2] as f64 - self.travel).rem_euclid(16.) as f32;
             }
+            let mesh = if self.config.family >= 7 && i % 3 != 2 {
+                &self.solids[i % 3]
+            } else {
+                &self.mesh
+            };
+            emit(
+                mesh,
+                &rotation,
+                position,
+                self.config.scale,
+                rgb,
+                &self.lights,
+                camera,
+                out,
+                false,
+            );
+        }
+        for i in 0..self.config.planes {
+            let side = i % 4;
+            let z = 2.
+                - (i as f64 / self.config.planes as f64 * 16. - self.travel).rem_euclid(16.) as f32;
+            let (mut position, rotation) = match side {
+                0 => (
+                    [0., -1.8, z],
+                    Rotation::new(std::f32::consts::FRAC_PI_2, 0.),
+                ),
+                1 => ([0., 1.8, z], Rotation::new(std::f32::consts::FRAC_PI_2, 0.)),
+                2 => (
+                    [-3.2, 0., z],
+                    Rotation::new(0., std::f32::consts::FRAC_PI_2),
+                ),
+                _ => ([3.2, 0., z], Rotation::new(0., std::f32::consts::FRAC_PI_2)),
+            };
+            position[0] -= (self.time * 0.23).sin() * 0.5;
+            position[1] -= (self.time * 0.31).sin() * 0.15;
+            let rgb = if (i / 4) % 2 == 0 {
+                [0.15, 0.7, 0.95]
+            } else {
+                [0.95, 0.3, 0.55]
+            };
+            emit(
+                &self.plane,
+                &rotation,
+                position,
+                0.75,
+                rgb,
+                &self.lights,
+                camera,
+                out,
+                true,
+            );
+        }
+    }
+}
+
+fn emit(
+    mesh: &Mesh,
+    rotation: &Rotation,
+    position: Vec3,
+    scale: f32,
+    rgb: Vec3,
+    lights: &[Vec3],
+    camera: &Camera,
+    out: &mut Vec<Vertex>,
+    two_sided: bool,
+) {
+    for face in &mesh.faces {
+        let n = rotation.apply(face.normal);
+        let first = add(mul(rotation.apply(face.points[0]), scale), position);
+        if !two_sided && dot(n, sub([0., 0., 5.], first)) <= 0. {
+            continue;
+        }
+        let mut illumination = 0.;
+        for light in lights {
+            illumination += if two_sided {
+                dot(n, *light).abs()
+            } else {
+                dot(n, *light).max(0.)
+            };
+        }
+        let illumination = 0.22 + 0.78 * illumination / lights.len() as f32;
+        let color = [
+            rgb[0] * illumination,
+            rgb[1] * illumination,
+            rgb[2] * illumination,
+            1.,
+        ];
+        for p in face.points {
+            out.push(Vertex {
+                position: camera.project(add(mul(rotation.apply(p), scale), position)),
+                color,
+            });
         }
     }
 }

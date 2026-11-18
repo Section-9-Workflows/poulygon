@@ -166,3 +166,21 @@ The artifact includes source, compiler/package versions and checksums.
 Compilation does not establish GPU behavior. Native frame rate, visual output,
 console restoration and power use need actual VAIO P validation. These settings
 are a performance baseline, not proof of the fastest implementation.
+
+## Application input
+
+The native library leaves key bindings to its caller. `Display::read_input`
+returns console text using the active Linux keymap. The demo executable still
+handles Q, Escape and Ctrl-C as exit commands. A game can instead use those keys
+for its menus and chat.
+
+`input::Device` exposes Linux keyboard and pointer events, including key release
+and repeat. It reads existing input-device permissions and does not grab devices.
+The caller must stop reading when its console loses focus. Queue overflow clears
+held keys until the kernel supplies a fresh state. Text entry remains separate
+from physical gameplay controls.
+
+Display ownership is limited to one instance per process. Closing it restores
+application signal handlers. An uncertain GPU outcome prevents another display
+attempt in that process. These changes have compiled remotely; console input and
+return-to-console behavior still need an Icarus pass.

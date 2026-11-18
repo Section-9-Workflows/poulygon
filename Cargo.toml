@@ -1,0 +1,19 @@
+[package]
+name = "poulygon"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Compact colored geometry and native Poulsback presentation"
+
+[features]
+default = []
+native = []
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "poulygon"
+path = "src/main.rs"
+required-features = ["native"]
+

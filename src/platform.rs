@@ -1,12 +1,7 @@
 // SPDX-License-Identifier: MIT
 use std::ffi::c_void;
 
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-pub struct Vertex {
-    pub position: [f32; 4],
-    pub color: [f32; 4],
-}
+pub use crate::vertex::Vertex;
 #[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub struct Metrics {

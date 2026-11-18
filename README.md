@@ -110,6 +110,20 @@ camera, mesh and display code, and reuse vertex storage during rendering. Future
 exploration, racing or music scenes can replace scene logic without duplicating
 DRM setup. There is no editor, plugin system, network transport or physics framework.
 
+## Embedding the engine
+
+The Cargo library exposes retained colored quads and a reusable frame buffer.
+`geometry::Frame::append` accepts a local-to-clip matrix, rejects geometry wholly
+outside the view, and expands visible quads into the existing native vertex
+format. An overflowing mesh is refused without changing earlier frame contents.
+The default library needs no native driver or desktop graphics dependencies.
+Enable `native` to use `platform::Display` on x86 Linux. Its C build uses the same
+source list and compiler flags as the standalone demos.
+
+Retained quads currently live in CPU memory. Visible vertices still cross into
+the frame writer each frame; resident GPU terrain buffers are not implemented.
+The Cinnabar port uses this boundary to reuse the existing display lifecycle.
+
 ## Native integration
 
 `src/native.c` owns DRM buffers, completion fences, the display and the terminal.

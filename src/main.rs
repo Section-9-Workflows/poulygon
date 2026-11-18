@@ -8,6 +8,7 @@ mod explorer;
 mod platform;
 mod scene;
 mod telemetry;
+mod vertex;
 
 use engine::{Camera, Clock};
 use explorer::Explorer;

@@ -11,7 +11,7 @@ pub struct Event {
 }
 
 extern "C" {
-    fn facet_input_open(path: *const std::ffi::c_char) -> i32;
+    fn facet_input_open(path: *const std::os::raw::c_char) -> i32;
     fn facet_input_read(fd: i32, event: *mut Event) -> i32;
     fn facet_input_keys(fd: i32, keys: *mut u8, size: u32) -> i32;
     fn facet_input_close(fd: i32);
@@ -46,7 +46,7 @@ impl Device {
             && self
                 .keys
                 .get(code / 8)
-                .is_some_and(|byte| byte & (1 << (code % 8)) != 0)
+                .map_or(false, |byte| *byte & (1 << (code % 8)) != 0)
     }
 
     /// A dropped kernel queue releases controls until SYN_REPORT restores actual held keys.

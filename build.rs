@@ -14,14 +14,18 @@ fn main() {
         return;
     }
     let target = env::var("TARGET").expect("Cargo target");
-    if !target.contains("linux") || !(target.starts_with("i686-") || target.starts_with("x86_64-")) {
+    if !target.contains("linux") || !(target.starts_with("i686-") || target.starts_with("x86_64-"))
+    {
         panic!("native Poulsback presentation requires x86 Linux");
     }
     let out = env::var("OUT_DIR").expect("Cargo output directory");
     let mut command = Command::new("sh");
     command.arg("tools/build-native.sh").arg(&out);
     if target.starts_with("i686-") {
-        command.env("CFLAGS", format!("{} -m32", env::var("CFLAGS").unwrap_or_default()));
+        command.env(
+            "CFLAGS",
+            format!("{} -m32", env::var("CFLAGS").unwrap_or_default()),
+        );
     }
     if !command.status().expect("start native compiler").success() {
         panic!("native Poulsback compilation failed");

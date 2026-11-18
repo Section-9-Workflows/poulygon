@@ -3,19 +3,19 @@
 
 pub use crate::vertex::Vertex;
 
-/// Four corners in perimeter order; the diagonal joins corners zero and two.
+/// Four corners in perimeter order, with one flat color for the native backend.
 #[derive(Clone, Copy)]
 pub struct Quad {
     points: [[f32; 3]; 4],
-    colors: [[u8; 4]; 4],
+    color: [u8; 4],
 }
 
 impl Quad {
-    pub fn new(points: [[f32; 3]; 4], colors: [[u8; 4]; 4]) -> Result<Self, &'static str> {
+    pub fn new(points: [[f32; 3]; 4], color: [u8; 4]) -> Result<Self, &'static str> {
         if points.iter().flatten().any(|v| !v.is_finite()) {
             return Err("non-finite quad position");
         }
-        Ok(Self { points, colors })
+        Ok(Self { points, color })
     }
 }
 
@@ -27,7 +27,10 @@ pub struct Frame {
 
 impl Frame {
     pub fn new(capacity: usize) -> Self {
-        Self { vertices: Vec::with_capacity(capacity), capacity }
+        Self {
+            vertices: Vec::with_capacity(capacity),
+            capacity,
+        }
     }
 
     pub fn clear(&mut self) {
@@ -46,27 +49,33 @@ impl Frame {
         }
         let start = self.vertices.len();
         for quad in quads {
-            let clip = quad.points.map(|p| std::array::from_fn::<_, 4, _>(|row| {
-                matrix[0][row] * p[0] + matrix[1][row] * p[1]
-                    + matrix[2][row] * p[2] + matrix[3][row]
-            }));
+            let clip = quad.points.map(|p| {
+                std::array::from_fn::<_, 4, _>(|row| {
+                    matrix[0][row] * p[0]
+                        + matrix[1][row] * p[1]
+                        + matrix[2][row] * p[2]
+                        + matrix[3][row]
+                })
+            });
             if clip.iter().flatten().any(|v| !v.is_finite()) {
                 self.vertices.truncate(start);
                 return Err("non-finite projected position");
             }
             // SGX clips intersecting faces; only wholly outside faces are rejected here.
-            if (0..3).any(|axis| clip.iter().all(|p| p[axis] < -p[3])
-                || clip.iter().all(|p| p[axis] > p[3])) {
+            if (0..3).any(|axis| {
+                clip.iter().all(|p| p[axis] < -p[3]) || clip.iter().all(|p| p[axis] > p[3])
+            }) {
                 continue;
             }
             if self.capacity.saturating_sub(self.vertices.len()) < 6 {
                 self.vertices.truncate(start);
                 return Err("visible geometry exceeds the native frame capacity");
             }
+            let color = quad.color.map(|v| f32::from(v) / 255.0);
             for corner in [0, 1, 2, 0, 2, 3] {
                 self.vertices.push(Vertex {
                     position: clip[corner],
-                    color: quad.colors[corner].map(|v| f32::from(v) / 255.0),
+                    color,
                 });
             }
         }

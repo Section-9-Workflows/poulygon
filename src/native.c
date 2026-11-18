@@ -37,8 +37,12 @@ struct facet {
     struct vt_mode vt;
     uint32_t (*words)[8];
     bool terminal_saved, vt_saved, master, shown, pending, lost;
+    struct sigaction saved_signals[5];
+    unsigned signal_count;
 };
 static volatile sig_atomic_t stop, release_vt;
+static bool display_opened, device_poisoned;
+static const int display_signals[] = {SIGTERM, SIGINT, SIGHUP, SIGUSR1, SIGUSR2};
 
 uint32_t facet_vertex_capacity(void)
 {
@@ -254,19 +258,26 @@ static int display_open(struct facet *f)
 
 struct facet *facet_open(uint32_t *width, uint32_t *height)
 {
+    if (display_opened || device_poisoned) {
+        error("display unavailable in this process", device_poisoned ? EIO : EBUSY);
+        return NULL;
+    }
     struct facet *f = calloc(1, sizeof(*f));
     if (!f) return NULL;
     f->fd = -1;
     f->words = calloc(facet_vertex_capacity(), sizeof(*f->words));
     if (!f->words) { free(f); return NULL; }
+    display_opened = true;
     int ret = display_open(f);
     if (ret) goto failed;
+    stop = release_vt = 0;
     struct sigaction action = {.sa_handler = interrupted};
     sigemptyset(&action.sa_mask);
-    if (sigaction(SIGTERM, &action, NULL) || sigaction(SIGINT, &action, NULL) ||
-        sigaction(SIGHUP, &action, NULL) || sigaction(SIGUSR1, &action, NULL) ||
-        sigaction(SIGUSR2, &action, NULL)) {
-        ret = -errno; goto failed;
+    for (unsigned i = 0; i < sizeof(display_signals) / sizeof(display_signals[0]); ++i) {
+        if (sigaction(display_signals[i], &action, &f->saved_signals[i])) {
+            ret = -errno; goto failed;
+        }
+        f->signal_count++;
     }
     if (ioctl(0, VT_GETMODE, &f->vt) || tcgetattr(0, &f->termios)) { ret = -errno; goto failed; }
     f->terminal_saved = f->vt_saved = true;
@@ -435,6 +446,12 @@ int facet_close(struct facet *f)
     }
     if (f->saved) drmModeFreeCrtc(f->saved);
     if (f->fd >= 0) close(f->fd);
+    for (unsigned i = f->signal_count; i > 0; --i) {
+        if (sigaction(display_signals[i - 1], &f->saved_signals[i - 1], NULL))
+            result = error("restore signal handler", errno);
+    }
+    device_poisoned |= f->lost;
+    display_opened = false;
     free(f->words);
     free(f);
     return result;

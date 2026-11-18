@@ -31,7 +31,8 @@ fn main() {
         panic!("native Poulsback compilation failed");
     }
     println!("cargo:rustc-link-search=native={out}");
-    println!("cargo:rustc-link-lib=static=facet_native");
+    // Keep GCC LTO objects out of rustc's archive repacking.
+    println!("cargo:rustc-link-lib=static:-bundle=facet_native");
     println!("cargo:rustc-link-lib=drm");
     println!("cargo:rustc-link-lib=m");
     println!("cargo:rustc-link-arg=-flto=auto");

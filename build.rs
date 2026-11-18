@@ -35,4 +35,6 @@ fn main() {
     println!("cargo:rustc-link-lib=drm");
     println!("cargo:rustc-link-lib=m");
     println!("cargo:rustc-link-arg=-flto=auto");
+    // The native archive uses GCC LTO, which rust-lld cannot read.
+    println!("cargo:rustc-link-arg=-fuse-ld=bfd");
 }

@@ -3,12 +3,18 @@
 mod character;
 mod cube;
 mod cybersphere;
+#[cfg(not(feature = "native"))]
 mod engine;
 mod explorer;
+#[cfg(not(feature = "native"))]
 mod platform;
 mod scene;
 mod telemetry;
+#[cfg(not(feature = "native"))]
 mod vertex;
+
+#[cfg(feature = "native")]
+use poulygon::{engine, platform};
 
 use engine::{Camera, Clock};
 use explorer::Explorer;

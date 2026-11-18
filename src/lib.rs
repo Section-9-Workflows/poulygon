@@ -2,6 +2,8 @@
 //! Shared geometry and optional Linux console presentation for Poulygon applications.
 pub mod engine;
 pub mod geometry;
-pub mod vertex;
+#[cfg(feature = "native")]
+pub mod input;
 #[cfg(feature = "native")]
 pub mod platform;
+pub mod vertex;

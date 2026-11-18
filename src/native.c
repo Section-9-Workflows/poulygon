@@ -298,7 +298,7 @@ struct facet *facet_open(uint32_t *width, uint32_t *height)
     if (ret) goto failed;
     setup_shape(f);
     *width = f->width; *height = f->height;
-    fprintf(stderr, "facet: native %ux%u, two scanout buffers; Q/Esc exits, VT switch exits\n",
+    fprintf(stderr, "facet: native %ux%u, two scanout buffers; VT switch exits\n",
             f->width, f->height);
     return f;
 failed:
@@ -308,17 +308,25 @@ failed:
     return NULL;
 }
 
+int facet_read_input(struct facet *f, unsigned char *bytes, uint32_t capacity)
+{
+    if (!f || !bytes || !capacity) return -EINVAL;
+    if (stop) return 0;
+    struct pollfd keyboard = {.fd = 0, .events = POLLIN};
+    int ready = poll(&keyboard, 1, 0);
+    if (ready < 0) return errno == EINTR ? 0 : -errno;
+    if (!ready) return 0;
+    if (keyboard.revents & (POLLERR | POLLHUP | POLLNVAL)) return -EIO;
+    if (!(keyboard.revents & POLLIN)) return 0;
+    ssize_t n = read(0, bytes, capacity);
+    if (n < 0) return errno == EINTR || errno == EAGAIN ? 0 : -errno;
+    return n ? (int)n : -EIO;
+}
+
 int facet_frame(struct facet *f, const struct facet_vertex *vertices, uint32_t count,
                 struct facet_metrics *metrics)
 {
     if (stop) return 0;
-    struct pollfd keyboard = {.fd = 0, .events = POLLIN};
-    if (poll(&keyboard, 1, 0) > 0) {
-        unsigned char keys[32];
-        ssize_t n = read(0, keys, sizeof(keys));
-        for (ssize_t i = 0; i < n; ++i)
-            if (keys[i] == 'q' || keys[i] == 'Q' || keys[i] == 27 || keys[i] == 3) return 0;
-    }
     memset(metrics, 0, sizeof(*metrics));
     if (!count || count % 3) return error("vertex span", EINVAL);
     if (count > facet_vertex_capacity()) return 2; /* Refused before submission. */

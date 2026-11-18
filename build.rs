@@ -4,6 +4,7 @@ use std::{env, process::Command};
 fn main() {
     println!("cargo:rerun-if-changed=src/native.c");
     println!("cargo:rerun-if-changed=src/native.h");
+    println!("cargo:rerun-if-changed=src/native_input.c");
     println!("cargo:rerun-if-changed=vendor/poulsback");
     println!("cargo:rerun-if-changed=tools/build-native.sh");
     println!("cargo:rerun-if-changed=tools/native-sources.txt");

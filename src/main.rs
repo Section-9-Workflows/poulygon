@@ -105,6 +105,14 @@ fn play(display: &mut Display, log: &mut Log, app: &str) -> Result<()> {
             &vertices[..]
         };
         let geometry = geometry_start.elapsed().as_secs_f64() * 1000.0;
+        let mut keys = [0; 32];
+        let count = display.read_input(&mut keys)?;
+        if keys[..count]
+            .iter()
+            .any(|key| matches!(key, b'q' | b'Q' | 27 | 3))
+        {
+            break;
+        }
         let (result, native) = display.frame(span)?;
         if result == 0 {
             break;

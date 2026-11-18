@@ -21,6 +21,7 @@ extern "C" {
     ) -> i32;
     fn facet_close(display: *mut c_void) -> i32;
     fn facet_vertex_capacity() -> u32;
+    fn facet_read_input(display: *mut c_void, bytes: *mut u8, capacity: u32) -> i32;
     fn facet_cpu_seconds() -> f64;
 }
 pub fn cpu_seconds() -> f64 {
@@ -43,6 +44,20 @@ impl Display {
     }
     pub fn capacity(&self) -> usize {
         unsafe { facet_vertex_capacity() as usize }
+    }
+
+    /// Reads console text without assigning application actions to its bytes.
+    pub fn read_input(&mut self, bytes: &mut [u8]) -> Result<usize, String> {
+        if bytes.is_empty() {
+            return Ok(0);
+        }
+        let capacity = u32::try_from(bytes.len()).map_err(|_| "input buffer is too large")?;
+        let count = unsafe { facet_read_input(self.raw, bytes.as_mut_ptr(), capacity) };
+        if count < 0 {
+            Err(format!("console input stopped ({count})"))
+        } else {
+            Ok(count as usize)
+        }
     }
     pub fn frame(&mut self, vertices: &[Vertex]) -> Result<(i32, Metrics), String> {
         if vertices.len() > self.capacity() {

@@ -12,4 +12,5 @@ while IFS= read -r source; do
     objects="$objects $object"
 done < tools/native-sources.txt
 ${CC:-cc} $flags -Werror $includes $(${PKG_CONFIG:-pkg-config} --cflags libdrm) -c src/native.c -o "$output/objects/native.o"
-${AR:-gcc-ar} rcs "$output/libfacet_native.a" $objects "$output/objects/native.o"
+${CC:-cc} $flags -Werror -c src/native_input.c -o "$output/objects/native_input.o"
+${AR:-gcc-ar} rcs "$output/libfacet_native.a" $objects "$output/objects/native.o" "$output/objects/native_input.o"

@@ -28,7 +28,7 @@ pub struct Frame {
 impl Frame {
     pub fn new(capacity: usize) -> Self {
         Self {
-            vertices: Vec::with_capacity(capacity),
+            vertices: Vec::new(),
             capacity,
         }
     }
@@ -70,6 +70,10 @@ impl Frame {
             if self.capacity.saturating_sub(self.vertices.len()) < 6 {
                 self.vertices.truncate(start);
                 return Err("visible geometry exceeds the native frame capacity");
+            }
+            if self.vertices.try_reserve(6).is_err() {
+                self.vertices.truncate(start);
+                return Err("could not allocate frame geometry");
             }
             let color = quad.color.map(|v| f32::from(v) / 255.0);
             for corner in [0, 1, 2, 0, 2, 3] {

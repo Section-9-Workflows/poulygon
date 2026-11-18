@@ -21,6 +21,7 @@ extern "C" {
     ) -> i32;
     fn facet_close(display: *mut c_void) -> i32;
     fn facet_vertex_capacity() -> u32;
+    fn facet_indexed_capacity() -> u32;
     fn facet_read_input(display: *mut c_void, bytes: *mut u8, capacity: u32) -> i32;
     fn facet_cpu_seconds() -> f64;
 }
@@ -46,6 +47,11 @@ impl Display {
         unsafe { facet_vertex_capacity() as usize }
     }
 
+    /// Maximum indexed draw size; storage grows only as geometry arrives.
+    pub fn indexed_capacity(&self) -> usize {
+        unsafe { facet_indexed_capacity() as usize }
+    }
+
     /// Reads console text without assigning application actions to its bytes.
     pub fn read_input(&mut self, bytes: &mut [u8]) -> Result<usize, String> {
         if bytes.is_empty() {
@@ -60,7 +66,7 @@ impl Display {
         }
     }
     pub fn frame(&mut self, vertices: &[Vertex]) -> Result<(i32, Metrics), String> {
-        if vertices.len() > self.capacity() {
+        if vertices.len() > self.indexed_capacity() {
             return Ok((2, Metrics::default()));
         }
         let mut metrics = Metrics::default();

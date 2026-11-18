@@ -3,6 +3,8 @@
 #define _GNU_SOURCE
 #include "native.h"
 #include "poulsback_frame.h"
+#include "sgx535_vertex.h"
+#include <math.h>
 #include "poulsback_bo_uapi.h"
 #include <drm_fourcc.h>
 #include <errno.h>
@@ -28,7 +30,8 @@
 struct facet {
     int fd, kd;
     uint32_t width, height, stride, connector, context, syncobj, fb[2], next;
-    struct poulsback_frame_bo color[2], depth, pds, vertices;
+    struct poulsback_frame_bo color[2], depth, pds, vertices, geometry, indices;
+    struct sgx535_vertex_code vertex_code;
     struct poulsback_frame_writer *writer;
     poulsback_frame_shape shape;
     struct sgx535_fragment_instruction fragment[8];
@@ -47,6 +50,12 @@ static const int display_signals[] = {SIGTERM, SIGINT, SIGHUP, SIGUSR1, SIGUSR2}
 uint32_t facet_vertex_capacity(void)
 {
     return (POULSBACK_FRAME_VERTEX_BYTES / sizeof(struct facet_vertex)) / 3u * 3u;
+}
+
+uint32_t facet_indexed_capacity(void)
+{
+    /* INDEXLIST's 22-bit count, checked by poulsback_frame_draw_gpu. */
+    return 0x3fffffu;
 }
 
 static double milliseconds(void)
@@ -334,30 +343,90 @@ int facet_read_input(struct facet *f, unsigned char *bytes, uint32_t capacity)
     return n ? (int)n : -EIO;
 }
 
+/* The previous render fence is drained before either buffer can be replaced. */
+static int large_draw(struct facet *f, const struct facet_vertex *vertices, uint32_t count)
+{
+    for (uint32_t i = 0; i < count; ++i) {
+        for (unsigned k = 0; k < 4; ++k)
+            if (!isfinite(vertices[i].position[k]) || !isfinite(vertices[i].color[k]) ||
+                vertices[i].color[k] < 0 || vertices[i].color[k] > 1)
+                return -EINVAL;
+        if (i % 3 && memcmp(vertices[i].color, vertices[i - i % 3].color, 16))
+            return -EINVAL;
+    }
+    uint64_t bytes = (uint64_t)count * sizeof(*vertices);
+    if (f->geometry.size < bytes) {
+        struct poulsback_frame_bo geometry = {0}, indices = {0};
+        uint64_t grown = f->geometry.size ? f->geometry.size * 2u : POULSBACK_FRAME_VERTEX_BYTES;
+        uint64_t maximum = (uint64_t)facet_indexed_capacity() * sizeof(*vertices);
+        if (grown > maximum) grown = maximum;
+        int ret = alloc_bo(f, POULSBACK_BO_CLASS_GENERAL, bytes > grown ? bytes : grown, &geometry);
+        if (!ret) ret = alloc_bo(f, POULSBACK_BO_CLASS_GENERAL,
+                                 (geometry.size / sizeof(*vertices)) * 4u, &indices);
+        if (ret) { free_bo(f, &geometry); free_bo(f, &indices); return ret; }
+        for (uint32_t i = 0; i < geometry.size / sizeof(*vertices); ++i)
+            ((uint32_t *)indices.map)[i] = i;
+        free_bo(f, &f->geometry); free_bo(f, &f->indices);
+        f->geometry = geometry; f->indices = indices;
+    }
+    if (!f->vertex_code.instruction_count) {
+        struct sgx535_vertex_instruction instructions[8] = {0};
+        for (unsigned i = 0; i < 8; ++i) {
+            instructions[i].opcode = SGX535_VERTEX_MOV;
+            instructions[i].output = i;
+            instructions[i].source[0].kind = SGX535_VERTEX_ATTRIBUTE;
+            instructions[i].source[0].index = i;
+        }
+        if (sgx535_vertex_encode(instructions, 8, 8, &f->vertex_code) != SGX535_VERTEX_OK)
+            return -EOPNOTSUPP;
+    }
+    memcpy(f->geometry.map, vertices, (size_t)bytes);
+    const uint32_t reserved = 0;
+    struct poulsback_frame_gpu_program program = {
+        .id = 1, .words = f->vertex_code.words,
+        .instruction_count = f->vertex_code.instruction_count, .temps = f->vertex_code.temps};
+    struct poulsback_frame_gpu_draw draw = {
+        .program = &program, .element_count = 2,
+        .element = {{f->geometry.handle, f->geometry.gpu_va, 4, sizeof(*vertices)},
+                    {f->geometry.handle, f->geometry.gpu_va + 16, 4, sizeof(*vertices)}},
+        .constants = &reserved, .constant_count = 1,
+        .index_handle = f->indices.handle, .index_address = f->indices.gpu_va,
+        .count = count, .index32 = true, .color = true};
+    poulsback_frame_shape shape = f->shape;
+    /* Replicated triangle colors stay flat; this selects the F32 color template. */
+    shape.mesh.scene.foreground.interpolation = SGX535_VARYING_SMOOTH;
+    return poulsback_frame_draw_gpu(f->writer, &shape, &draw);
+}
+
 int facet_frame(struct facet *f, const struct facet_vertex *vertices, uint32_t count,
                 struct facet_metrics *metrics)
 {
     if (stop) return 0;
     memset(metrics, 0, sizeof(*metrics));
     if (!count || count % 3) return error("vertex span", EINVAL);
-    if (count > facet_vertex_capacity()) return 2; /* Refused before submission. */
+    if (count > facet_indexed_capacity()) return 2; /* Refused before submission. */
     double started = milliseconds();
     _Static_assert(sizeof(struct facet_vertex) == 32, "Rust/C vertex layout");
-    memcpy(f->words, vertices, count * sizeof(*vertices));
     poulsback_frame_begin(f->writer, &f->pds, &f->vertices);
     int ret;
-    const uint32_t batch = POULSBACK_FRAME_MAX_VERTICES / 3u * 3u;
-    for (uint32_t offset = 0; offset < count;) {
-        uint32_t size = count - offset < batch ? count - offset : batch;
-        if (metrics->draws == POULSBACK_FRAME_MAX_DRAWS) return 2;
-        struct poulsback_frame_vertices in = {
-            .count = size, .window = &f->words[offset][0], .clip_w = &f->words[offset][3],
-            .rgba = &f->words[offset][4], .window_stride = 8, .clip_stride = 8, .rgba_stride = 8};
-        ret = poulsback_frame_draw(f->writer, &f->shape, &in);
-        if (ret == -E2BIG || ret == -ENOSPC) return 2;
-        if (ret) return error("construct draw", -ret);
-        metrics->draws++;
-        offset += size;
+    if (count > facet_vertex_capacity()) {
+        ret = large_draw(f, vertices, count);
+        if (ret) return error("construct indexed frame", -ret);
+        metrics->draws = 1;
+    } else {
+        memcpy(f->words, vertices, count * sizeof(*vertices));
+        const uint32_t batch = POULSBACK_FRAME_MAX_VERTICES / 3u * 3u;
+        for (uint32_t offset = 0; offset < count;) {
+            uint32_t size = count - offset < batch ? count - offset : batch;
+            struct poulsback_frame_vertices in = {
+                .count = size, .window = &f->words[offset][0], .clip_w = &f->words[offset][3],
+                .rgba = &f->words[offset][4], .window_stride = 8, .clip_stride = 8, .rgba_stride = 8};
+            ret = poulsback_frame_draw(f->writer, &f->shape, &in);
+            if (ret == -E2BIG || ret == -ENOSPC) return 2;
+            if (ret) return error("construct draw", -ret);
+            metrics->draws++;
+            offset += size;
+        }
     }
     struct poulsback_frame_buffer target = {
         f->color[f->next].handle, f->stride, f->color[f->next].gpu_va, f->color[f->next].size};
@@ -428,6 +497,7 @@ int facet_close(struct facet *f)
             free_bo(f, &f->color[i]);
         }
         free_bo(f, &f->pds); free_bo(f, &f->vertices); free_bo(f, &f->depth);
+        free_bo(f, &f->geometry); free_bo(f, &f->indices);
         if (f->syncobj) drmSyncobjDestroy(f->fd, f->syncobj);
         if (f->context) {
             struct poulsback_context_destroy context = {.abi = POULSBACK_EXEC_ABI, .handle = f->context};

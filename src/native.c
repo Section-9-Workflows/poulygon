@@ -30,7 +30,7 @@
 struct facet {
     int fd, kd;
     uint32_t width, height, stride, connector, context, syncobj, fb[2], next;
-    struct poulsback_frame_bo color[2], depth, pds, vertices, geometry, indices;
+    struct poulsback_frame_bo color[2], depth, pds, vertices, geometry;
     struct sgx535_vertex_code vertex_code;
     struct poulsback_frame_writer *writer;
     poulsback_frame_shape shape;
@@ -54,8 +54,7 @@ uint32_t facet_vertex_capacity(void)
 
 uint32_t facet_indexed_capacity(void)
 {
-    /* INDEXLIST's 22-bit count, checked by poulsback_frame_draw_gpu. */
-    return 0x3fffffu;
+    return (POULSBACK_FRAME_SEQUENCE / 3u * 3u) * POULSBACK_FRAME_MAX_DRAWS;
 }
 
 static double milliseconds(void)
@@ -356,18 +355,14 @@ static int large_draw(struct facet *f, const struct facet_vertex *vertices, uint
     }
     uint64_t bytes = (uint64_t)count * sizeof(*vertices);
     if (f->geometry.size < bytes) {
-        struct poulsback_frame_bo geometry = {0}, indices = {0};
+        struct poulsback_frame_bo geometry = {0};
         uint64_t grown = f->geometry.size ? f->geometry.size * 2u : POULSBACK_FRAME_VERTEX_BYTES;
         uint64_t maximum = (uint64_t)facet_indexed_capacity() * sizeof(*vertices);
         if (grown > maximum) grown = maximum;
         int ret = alloc_bo(f, POULSBACK_BO_CLASS_GENERAL, bytes > grown ? bytes : grown, &geometry);
-        if (!ret) ret = alloc_bo(f, POULSBACK_BO_CLASS_GENERAL,
-                                 (geometry.size / sizeof(*vertices)) * 4u, &indices);
-        if (ret) { free_bo(f, &geometry); free_bo(f, &indices); return ret; }
-        for (uint32_t i = 0; i < geometry.size / sizeof(*vertices); ++i)
-            ((uint32_t *)indices.map)[i] = i;
-        free_bo(f, &f->geometry); free_bo(f, &f->indices);
-        f->geometry = geometry; f->indices = indices;
+        if (ret) { free_bo(f, &geometry); return ret; }
+        free_bo(f, &f->geometry);
+        f->geometry = geometry;
     }
     if (!f->vertex_code.instruction_count) {
         struct sgx535_vertex_instruction instructions[8] = {0};
@@ -390,12 +385,22 @@ static int large_draw(struct facet *f, const struct facet_vertex *vertices, uint
         .element = {{f->geometry.handle, f->geometry.gpu_va, 4, sizeof(*vertices)},
                     {f->geometry.handle, f->geometry.gpu_va + 16, 4, sizeof(*vertices)}},
         .constants = &reserved, .constant_count = 1,
-        .index_handle = f->indices.handle, .index_address = f->indices.gpu_va,
-        .count = count, .index32 = true, .color = true};
+        .color = true};
     poulsback_frame_shape shape = f->shape;
     /* Replicated triangle colors stay flat; this selects the F32 color template. */
     shape.mesh.scene.foreground.interpolation = SGX535_VARYING_SMOOTH;
-    return poulsback_frame_draw_gpu(f->writer, &shape, &draw);
+    poulsback_frame_sequence(f->writer, &draw.index_address, &draw.index_handle);
+    /* This PDS fetch multiplies ir0.l; advance the base before indices exceed 16 bits. */
+    const uint32_t batch = POULSBACK_FRAME_SEQUENCE / 3u * 3u;
+    for (uint32_t offset = 0; offset < count;) {
+        draw.count = count - offset < batch ? count - offset : batch;
+        draw.element[0].address = f->geometry.gpu_va + (uint64_t)offset * sizeof(*vertices);
+        draw.element[1].address = draw.element[0].address + 16;
+        int ret = poulsback_frame_draw_gpu(f->writer, &shape, &draw);
+        if (ret) return ret;
+        offset += draw.count;
+    }
+    return 0;
 }
 
 int facet_frame(struct facet *f, const struct facet_vertex *vertices, uint32_t count,
@@ -412,7 +417,7 @@ int facet_frame(struct facet *f, const struct facet_vertex *vertices, uint32_t c
     if (count > facet_vertex_capacity()) {
         ret = large_draw(f, vertices, count);
         if (ret) return error("construct indexed frame", -ret);
-        metrics->draws = 1;
+        metrics->draws = poulsback_frame_draws(f->writer);
     } else {
         memcpy(f->words, vertices, count * sizeof(*vertices));
         const uint32_t batch = POULSBACK_FRAME_MAX_VERTICES / 3u * 3u;
@@ -497,7 +502,7 @@ int facet_close(struct facet *f)
             free_bo(f, &f->color[i]);
         }
         free_bo(f, &f->pds); free_bo(f, &f->vertices); free_bo(f, &f->depth);
-        free_bo(f, &f->geometry); free_bo(f, &f->indices);
+        free_bo(f, &f->geometry);
         if (f->syncobj) drmSyncobjDestroy(f->fd, f->syncobj);
         if (f->context) {
             struct poulsback_context_destroy context = {.abi = POULSBACK_EXEC_ABI, .handle = f->context};

@@ -1,7 +1,7 @@
 # Poulygon
 
 A compact Rust engine for flat-shaded 3D on the Sony VAIO P, using Poulsback
-directly at the inherited panel resolution (1600×768 on Icarus). It needs no X,
+directly at the inherited panel resolution (1600×768 on the VAIO P). It needs no X,
 Wayland, OpenGL or Mesa runtime. The original cube and an automatic workload
 explorer share the same native display backend.
 
@@ -183,4 +183,5 @@ from physical gameplay controls.
 Display ownership is limited to one instance per process. Closing it restores
 application signal handlers. An uncertain GPU outcome prevents another display
 attempt in that process. These changes have compiled remotely; console input and
-return-to-console behavior still need an Icarus pass.
+return-to-console behavior require validation on the target VAIO P for each
+release. This branch is experimental; compilation alone does not qualify it.
